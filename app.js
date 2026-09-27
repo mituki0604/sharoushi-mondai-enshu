@@ -1,9 +1,13 @@
-import { loadQuestionCache, saveQuestionCache } from "./question-cache.js";
+import { loadQuestionCache, saveQuestionCache } from "./question-cache.js?v=20260927-1";
 
 const baseAliases = {
   id: ["id", "問題番号", "番号", "no"],
+  learning: ["learning", "学習", "学習区分", "大分類"],
   course: ["course", "科目", "コース"],
-  topic: ["topic", "論点", "テーマ"],
+  unit: ["unit", "単元", "章", "分野"],
+  theme: ["theme", "テーマ"],
+  type: ["type", "種類", "問題種類", "区分"],
+  legacyTopic: ["topic", "論点"],
   question: ["question", "問題", "問題文"],
   answer: ["answer", "回答", "正解"],
   explanation: ["explanation", "解説"]
@@ -14,6 +18,18 @@ const FALSE_VALUES = new Set(["×", "✕", "✖"]);
 const DATA_VERSION = "simple-sheet-v1";
 const ACTIVE_SESSION_KEY = "loopnote-active-session";
 const MISTAKE_LOG_KEY = "loopnote-mistake-log";
+const QUESTION_NOTES_KEY = "loopnote-question-notes";
+const DEFAULT_SHEET_SOURCE = "https://docs.google.com/spreadsheets/d/1Y8b0slGZfp0psWOHnpG6X7O76juEUuPKV3EMo9iMFuw/edit?gid=0";
+const SOURCE_CONFIG_VERSION = "three-layer-sheet-v1";
+
+function loadQuestionNotes() {
+  try {
+    const notes = JSON.parse(localStorage.getItem(QUESTION_NOTES_KEY) || "{}");
+    return notes && typeof notes === "object" && !Array.isArray(notes) ? notes : {};
+  } catch {
+    return {};
+  }
+}
 
 if (localStorage.getItem("loopnote-data-version") !== DATA_VERSION) {
   localStorage.removeItem("loopnote-answered");
@@ -22,51 +38,69 @@ if (localStorage.getItem("loopnote-data-version") !== DATA_VERSION) {
   localStorage.setItem("loopnote-data-version", DATA_VERSION);
 }
 
-const COURSES = [
+if (localStorage.getItem("loopnote-source-config-version") !== SOURCE_CONFIG_VERSION) {
+  localStorage.setItem("loopnote-source", DEFAULT_SHEET_SOURCE);
+  localStorage.setItem("loopnote-source-config-version", SOURCE_CONFIG_VERSION);
+}
+
+const LEARNINGS = [
   {
-    id: "白書統計",
+    id: "模試・問題集",
     number: "01",
+    kicker: "MOCK EXAMS & BOOKS",
+    description: "模試や問題集を、科目・単元・テーマで絞って演習。",
+    className: "mock-exams"
+  },
+  {
+    id: "白書・統計",
+    number: "02",
     kicker: "DATA & WHITE PAPER",
     description: "白書・労働経済・社会保障統計を、定義と傾向から確認。",
-    className: "statistics"
-  },
-  {
-    id: "数字",
-    number: "02",
-    kicker: "NUMBERS & LIMITS",
-    description: "日数・期間・率・上限を、テンポよく反復。",
-    className: "numbers"
-  },
-  {
-    id: "横断整理",
-    number: "03",
-    kicker: "CROSS SUBJECT",
-    description: "似ている制度を並べて、違いを一問一答で整理。",
-    className: "cross"
+    className: "white-papers"
   },
   {
     id: "罰則",
-    number: "04",
+    number: "03",
     kicker: "PENALTIES",
-    description: "罰則の内容を、○×または自己採点で確認。",
+    description: "各法律の罰則を、科目ごとに整理して確認。",
     className: "penalties"
+  },
+  {
+    id: "数字",
+    number: "04",
+    kicker: "NUMBERS & LIMITS",
+    description: "日数・期間・率・上限を、テンポよく反復。",
+    className: "numbers",
+    skipTypeSelection: true
+  },
+  {
+    id: "過去問",
+    number: "05",
+    kicker: "PAST EXAMS",
+    description: "本試験の過去問を、科目・単元・テーマで絞って演習。",
+    className: "past-exams"
   }
 ];
 
 const state = {
   questions: [],
   sessionQuestions: [],
+  selectedLearning: null,
   selectedCourse: null,
+  selectedUnit: null,
   selectedTopic: null,
+  selectedTypes: [],
   sessionShuffle: false,
   rememberAnswers: true,
   reviewScope: null,
+  reviewDialogMode: "range",
   selectedCategory: "すべて",
   currentId: null,
   selections: new Map(),
   gradedChoices: new Set(),
   graded: false,
   revealed: false,
+  enteredAnswer: "",
   syncing: false,
   cacheLoaded: false,
   questionVersion: null,
@@ -76,7 +110,16 @@ const state = {
   sessionResults: new Map(),
   sessionAnswers: new Map(),
   history: JSON.parse(localStorage.getItem("loopnote-history") || "[]"),
-  mistakeLog: JSON.parse(localStorage.getItem(MISTAKE_LOG_KEY) || "[]")
+  mistakeLog: JSON.parse(localStorage.getItem(MISTAKE_LOG_KEY) || "[]"),
+  questionNotes: loadQuestionNotes(),
+  timerElapsedMs: 0,
+  timerStartedAt: null,
+  timerRunning: false,
+  timerManuallyPaused: false,
+  timerAwayStartedAt: null,
+  timerAwayElapsedMs: 0,
+  timerAwayDecisionPending: false,
+  timerIntervalId: null
 };
 if (!Array.isArray(state.history)) state.history = [];
 if (!Array.isArray(state.mistakeLog)) state.mistakeLog = [];
@@ -88,19 +131,36 @@ if (localStorage.getItem(MISTAKE_LOG_KEY) === null) {
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   homeScreen: $("#homeScreen"),
+  subjectScreen: $("#subjectScreen"),
+  unitScreen: $("#unitScreen"),
   topicScreen: $("#topicScreen"),
   practiceScreen: $("#practiceScreen"),
   resultScreen: $("#resultScreen"),
   historyScreen: $("#historyScreen"),
   courseGrid: $("#courseGrid"),
+  subjectLearningLabel: $("#subjectLearningLabel"),
+  subjectTitle: $("#subjectTitle"),
+  subjectGrid: $("#subjectGrid"),
+  subjectBackButton: $("#subjectBackButton"),
+  unitLearningLabel: $("#unitLearningLabel"),
+  unitTitle: $("#unitTitle"),
+  unitGrid: $("#unitGrid"),
+  unitBackButton: $("#unitBackButton"),
   resumePanel: $("#resumePanel"),
   resumeSessionButton: $("#resumeSessionButton"),
   resumeSessionTitle: $("#resumeSessionTitle"),
   resumeSessionProgress: $("#resumeSessionProgress"),
   topicCourseLabel: $("#topicCourseLabel"),
   topicTitle: $("#topicTitle"),
+  topicDescription: $("#topicDescription"),
+  typeSelectionToolbar: $("#typeSelectionToolbar"),
   topicGrid: $("#topicGrid"),
   topicBackButton: $("#topicBackButton"),
+  selectAllTypes: $("#selectAllTypes"),
+  typeSelectionCount: $("#typeSelectionCount"),
+  selectedTypesStartButton: $("#selectedTypesStartButton"),
+  selectedTypesShuffleButton: $("#selectedTypesShuffleButton"),
+  selectedTypesReviewButton: $("#selectedTypesReviewButton"),
   homeProgressText: $("#homeProgressText"),
   homeProgressBar: $("#homeProgressBar"),
   homeResetButton: $("#homeResetButton"),
@@ -108,8 +168,11 @@ const elements = {
   resultCourse: $("#resultCourse"),
   resultScore: $("#resultScore"),
   resultCount: $("#resultCount"),
+  resultElapsedTime: $("#resultElapsedTime"),
+  resultAverageTime: $("#resultAverageTime"),
   resultRateBar: $("#resultRateBar"),
   resultComment: $("#resultComment"),
+  resultMistakesButton: $("#resultMistakesButton"),
   retryButton: $("#retryButton"),
   resultHomeButton: $("#resultHomeButton"),
   shuffleButton: $("#shuffleButton"),
@@ -131,8 +194,18 @@ const elements = {
   categoryEyebrow: $("#categoryEyebrow"),
   questionCard: $("#questionCard"),
   questionNumber: $("#questionNumber"),
+  sheetQuestionNumber: $("#sheetQuestionNumber"),
   difficultyBadge: $("#difficultyBadge"),
   sessionAccuracyBadge: $("#sessionAccuracyBadge"),
+  sessionTimer: $("#sessionTimer"),
+  sessionTimerValue: $("#sessionTimerValue"),
+  sessionTimerToggle: $("#sessionTimerToggle"),
+  timerPausedOverlay: $("#timerPausedOverlay"),
+  timerPausedValue: $("#timerPausedValue"),
+  timerAwayOverlay: $("#timerAwayOverlay"),
+  timerAwayValue: $("#timerAwayValue"),
+  timerAwayExcludeButton: $("#timerAwayExcludeButton"),
+  timerAwayIncludeButton: $("#timerAwayIncludeButton"),
   previousButton: $("#previousButton"),
   jumpButton: $("#jumpButton"),
   skipButton: $("#skipButton"),
@@ -142,6 +215,7 @@ const elements = {
   choiceList: $("#choiceList"),
   cardActions: $("#cardActions"),
   resultMessage: $("#resultMessage"),
+  answerExplanation: $("#answerExplanation"),
   revealButton: $("#revealButton"),
   nextButton: $("#nextButton"),
   nextButtonLabel: $("#nextButtonLabel"),
@@ -170,6 +244,11 @@ const elements = {
   rangeReviewStartButton: $("#rangeReviewStartButton"),
   reviewStartDate: $("#reviewStartDate"),
   reviewEndDate: $("#reviewEndDate"),
+  reviewDialogEyebrow: $("#reviewDialogEyebrow"),
+  reviewDialogTitle: $("#reviewDialogTitle"),
+  reviewDialogCopy: $("#reviewDialogCopy"),
+  reviewDateFields: $("#reviewDateFields"),
+  reviewLearningSelect: $("#reviewLearningSelect"),
   reviewCourseSelect: $("#reviewCourseSelect"),
   rangeReviewCount: $("#rangeReviewCount"),
   toast: $("#toast")
@@ -226,19 +305,45 @@ function parseCorrect(value) {
   return null;
 }
 
+function parseNumericAnswer(value) {
+  const normalized = String(value ?? "").normalize("NFKC").trim();
+  return /^[0-9]{1,20}$/.test(normalized) ? normalized : null;
+}
+
 function choiceAliases(index, field) {
   if (field === "text") return [`choice${index}`, `statement${index}`, `肢${index}`, `選択肢${index}`];
   if (field === "correct") return [`answer${index}`, `correct${index}`, `正解${index}`, `回答${index}`];
   return [`explanation${index}`, `commentary${index}`, `解説${index}`];
 }
 
-function normalizeCourse(value) {
-  const compact = String(value || "").trim().replace(/[・\s]/g, "");
-  if (compact === "白書統計") return "白書統計";
-  if (compact === "数字" || compact === "数字に関する問題") return "数字";
-  if (compact === "横断整理") return "横断整理";
+function normalizeLearning(value) {
+  const compact = String(value || "").normalize("NFKC").trim().replace(/^[①②③④⑤1-5][.．、)]?/, "").replace(/[・\s]/g, "");
+  if (["模試問題集", "模試", "問題集", "主要科目"].includes(compact)) return "模試・問題集";
+  if (["白書統計", "白書", "統計"].includes(compact)) return "白書・統計";
   if (compact === "罰則") return "罰則";
-  return compact;
+  if (["数字", "数字に関する問題"].includes(compact)) return "数字";
+  if (["過去問", "過去問題", "本試験過去問"].includes(compact)) return "過去問";
+  return String(value || "").normalize("NFKC").trim();
+}
+
+function normalizeCourse(value) {
+  return String(value || "").normalize("NFKC").trim() || "共通";
+}
+
+function normalizeType(value) {
+  return String(value || "").normalize("NFKC").trim() || "標準テーマ";
+}
+
+function normalizeUnit(value) {
+  return String(value || "").normalize("NFKC").trim() || "標準単元";
+}
+
+function inferLegacyLearning(course) {
+  const compact = String(course || "").normalize("NFKC").trim().replace(/[・\s]/g, "");
+  if (compact === "白書統計") return "白書・統計";
+  if (compact === "罰則") return "罰則";
+  if (compact === "数字" || compact === "数字に関する問題") return "数字";
+  return "模試・問題集";
 }
 
 function questionHistory(questionId) {
@@ -281,38 +386,69 @@ function createQuestionHistory(questionId) {
   return panel;
 }
 
-function createQuestion({ id, course, topic, question, answer, explanation }) {
+function createQuestion({ id, learning, course, unit, theme, type, topic, question, answer, explanation }) {
   const normalizedCourse = normalizeCourse(course);
-  const normalizedTopic = String(topic || "").trim() || "標準問題";
+  const normalizedLearning = normalizeLearning(learning) || inferLegacyLearning(normalizedCourse);
+  const normalizedUnit = normalizeUnit(unit);
+  const normalizedType = normalizeType(theme ?? type ?? topic);
   const text = String(question || "").trim();
-  if (!id || !normalizedCourse || !text) return null;
+  if (!id || !normalizedLearning || !normalizedCourse || !text) return null;
 
   const answerText = String(answer ?? "").trim();
   const correct = typeof answer === "boolean" ? answer : parseCorrect(answer);
-  if (correct === null) {
-    if (!answerText) return null;
+  const numericCorrect = parseNumericAnswer(answerText);
+  if (!answerText || numericCorrect !== null) {
     return {
       id: String(id).trim(),
+      sourceNumber: String(id).trim(),
+      learning: normalizedLearning,
       course: normalizedCourse,
-      topic: normalizedTopic,
-      category: normalizedTopic,
+      unit: normalizedUnit,
+      theme: normalizedType,
+      type: normalizedType,
+      topic: normalizedType,
+      category: normalizedType,
+      mode: "numeric-entry",
+      difficulty: numericCorrect === null ? "正解未登録" : "数字入力",
+      question: text,
+      context: `${normalizedLearning} / ${normalizedCourse} / ${normalizedUnit} / ${normalizedType}`,
+      hint: "",
+      choices: [{ text, correct: numericCorrect, explanation: String(explanation || "").trim() }]
+    };
+  }
+  if (correct === null) {
+    return {
+      id: String(id).trim(),
+      sourceNumber: String(id).trim(),
+      learning: normalizedLearning,
+      course: normalizedCourse,
+      unit: normalizedUnit,
+      theme: normalizedType,
+      type: normalizedType,
+      topic: normalizedType,
+      category: normalizedType,
       mode: "self-assessment",
       difficulty: "自己採点",
       question: text,
-      context: `${normalizedCourse} / ${normalizedTopic}`,
+      context: `${normalizedLearning} / ${normalizedCourse} / ${normalizedUnit} / ${normalizedType}`,
       hint: "",
       choices: [{ text, correct: answerText, explanation: String(explanation || "").trim() }]
     };
   }
   return {
     id: String(id).trim(),
+    sourceNumber: String(id).trim(),
+    learning: normalizedLearning,
     course: normalizedCourse,
-    topic: normalizedTopic,
-    category: normalizedTopic,
+    unit: normalizedUnit,
+    theme: normalizedType,
+    type: normalizedType,
+    topic: normalizedType,
+    category: normalizedType,
     mode: "true-false",
     difficulty: "○×",
     question: text,
-    context: `${normalizedCourse} / ${normalizedTopic}`,
+    context: `${normalizedLearning} / ${normalizedCourse} / ${normalizedUnit} / ${normalizedType}`,
     hint: "",
     choices: [{ text, correct, explanation: String(explanation || "").trim() }]
   };
@@ -339,13 +475,26 @@ function rowsToQuestions(rows) {
   const indexes = Object.fromEntries(
     Object.entries(baseAliases).map(([key, aliases]) => [key, findColumn(headers, aliases)])
   );
-  const missing = ["id", "course", "topic", "question", "answer", "explanation"].filter((key) => indexes[key] < 0);
-  if (missing.length) throw new Error("列は左から「問題番号・科目・論点・問題文・回答・解説」にしてください");
+  const usesThreeLayerFormat = indexes.unit >= 0 || indexes.theme >= 0;
+  const usesLearningFormat = usesThreeLayerFormat || indexes.learning >= 0 || indexes.type >= 0;
+  const required = usesThreeLayerFormat
+    ? ["id", "course", "unit", "theme", "question", "answer", "explanation"]
+    : usesLearningFormat
+      ? ["id", "learning", "course", "type", "question", "answer", "explanation"]
+    : ["id", "course", "legacyTopic", "question", "answer", "explanation"];
+  const missing = required.filter((key) => indexes[key] < 0);
+  if (missing.length) throw new Error("列は左から「問題番号・科目・単元・テーマ・問題文・回答・解説」にしてください");
 
   return ensureUniqueQuestionIds(rows.slice(1).map((row) => createQuestion({
     id: row[indexes.id],
+    learning: usesThreeLayerFormat
+      ? indexes.learning >= 0 ? row[indexes.learning] : "過去問"
+      : usesLearningFormat ? row[indexes.learning] : inferLegacyLearning(row[indexes.course]),
     course: row[indexes.course],
-    topic: row[indexes.topic],
+    unit: usesThreeLayerFormat ? row[indexes.unit] : "標準単元",
+    theme: usesThreeLayerFormat
+      ? row[indexes.theme]
+      : usesLearningFormat ? row[indexes.type] : row[indexes.legacyTopic],
     question: row[indexes.question],
     answer: row[indexes.answer],
     explanation: row[indexes.explanation]
@@ -357,8 +506,10 @@ function normalizeJSON(data) {
   if (!Array.isArray(list)) throw new Error("JSONは配列または questions 配列で返してください");
   return ensureUniqueQuestionIds(list.map((item, index) => createQuestion({
     id: item.id ?? item["問題番号"] ?? index + 1,
+    learning: item.learning ?? item["学習"],
     course: item.course ?? item["科目"],
-    topic: item.topic ?? item["論点"],
+    unit: item.unit ?? item["単元"],
+    theme: item.theme ?? item["テーマ"] ?? item.type ?? item["種類"] ?? item.topic ?? item["論点"],
     question: item.question ?? item["問題文"],
     answer: item.answer ?? item["回答"],
     explanation: item.explanation ?? item["解説"]
@@ -388,7 +539,10 @@ function resetCurrentState() {
   state.gradedChoices = new Set();
   state.graded = false;
   state.revealed = false;
+  state.enteredAnswer = "";
   elements.resultMessage.hidden = true;
+  elements.answerExplanation.hidden = true;
+  elements.answerExplanation.replaceChildren();
 }
 
 function saveCurrentQuestionState() {
@@ -397,7 +551,8 @@ function saveCurrentQuestionState() {
     selections: new Map(state.selections),
     gradedChoices: new Set(state.gradedChoices),
     graded: state.graded,
-    revealed: state.revealed
+    revealed: state.revealed,
+    enteredAnswer: state.enteredAnswer
   });
 }
 
@@ -411,7 +566,255 @@ function restoreQuestionState(id) {
   state.gradedChoices = new Set(saved.gradedChoices);
   state.graded = saved.graded;
   state.revealed = saved.revealed;
+  state.enteredAnswer = String(saved.enteredAnswer || "");
   elements.resultMessage.hidden = true;
+  elements.answerExplanation.hidden = true;
+  elements.answerExplanation.replaceChildren();
+}
+
+function sessionElapsedMs() {
+  const activeSegment = state.timerRunning && state.timerStartedAt !== null
+    ? Date.now() - state.timerStartedAt
+    : 0;
+  return Math.max(0, state.timerElapsedMs + activeSegment);
+}
+
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value) => String(value).padStart(2, "0");
+  return hours > 0
+    ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+    : `${pad(minutes)}:${pad(seconds)}`;
+}
+
+function formatAverageDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds)) return "--";
+  if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(1)}秒`;
+  return formatDuration(milliseconds);
+}
+
+function normalizeMultilineText(value) {
+  return String(value ?? "").replace(/\r\n?|\u2028|\u2029/g, "\n");
+}
+
+function preserveVisibleBlankLines(value) {
+  return normalizeMultilineText(value)
+    .split("\n")
+    .map((line) => line.trim() === "" ? "\u00a0" : line)
+    .join("\n");
+}
+
+function normalizeNumericEntry(value) {
+  return String(value ?? "").normalize("NFKC").replace(/[^0-9]/g, "").slice(0, 20);
+}
+
+function canonicalNumericAnswer(value) {
+  return normalizeNumericEntry(value).replace(/^0+(?=\d)/, "");
+}
+
+function formatLongQuestionClause(sentence) {
+  const characters = Array.from(sentence);
+  if (characters.length < 56) return sentence;
+  let lineLength = 0;
+  return characters.map((character, index) => {
+    lineLength += 1;
+    const remaining = characters.length - index - 1;
+    if (["、", "；", "："].includes(character) && lineLength >= 28 && remaining >= 12) {
+      lineLength = 0;
+      return `${character}\n`;
+    }
+    return character;
+  }).join("");
+}
+
+function formatQuestionText(value) {
+  const source = normalizeMultilineText(value);
+  const characterCount = Array.from(source.replace(/\s/g, "")).length;
+  if (characterCount < 36) return preserveVisibleBlankLines(source);
+  const formatted = source.split("\n").map((paragraph) => {
+    if (!paragraph.trim()) return "";
+    return paragraph.trim()
+      .replace(/([。！？]+[」』）】〕〉》]*)(?:[ \t]+)?(?=\S)/gu, "$1\n")
+      .split("\n")
+      .map(formatLongQuestionClause)
+      .join("\n");
+  }).join("\n");
+  return preserveVisibleBlankLines(formatted);
+}
+
+function timerAwayElapsedMs() {
+  const activeAwaySegment = state.timerAwayStartedAt !== null
+    ? Date.now() - state.timerAwayStartedAt
+    : 0;
+  return Math.max(0, state.timerAwayElapsedMs + activeAwaySegment);
+}
+
+function renderSessionTimer() {
+  if (!elements.sessionTimerValue || !elements.sessionTimerToggle) return;
+  const elapsedText = formatDuration(sessionElapsedMs());
+  const practiceVisible = !elements.practiceScreen.hidden;
+  const showAwayOverlay = state.timerAwayDecisionPending && practiceVisible;
+  const showPausedOverlay = state.timerManuallyPaused && !showAwayOverlay && practiceVisible;
+  elements.sessionTimerValue.textContent = elapsedText;
+  elements.sessionTimer.classList.toggle("paused", !state.timerRunning);
+  elements.sessionTimerToggle.textContent = state.timerRunning ? "ストップ" : "スタート";
+  elements.sessionTimerToggle.setAttribute("aria-pressed", String(!state.timerRunning));
+  elements.sessionTimerToggle.setAttribute(
+    "aria-label",
+    state.timerRunning ? "ストップウォッチを停止" : "ストップウォッチをスタート"
+  );
+  elements.timerPausedValue.textContent = elapsedText;
+  elements.timerPausedOverlay.hidden = !showPausedOverlay;
+  elements.timerAwayValue.textContent = formatDuration(timerAwayElapsedMs());
+  elements.timerAwayOverlay.hidden = !showAwayOverlay;
+  document.body.classList.toggle("timer-paused", showPausedOverlay || showAwayOverlay);
+}
+
+function stopSessionTimerTicker() {
+  if (state.timerIntervalId !== null) window.clearInterval(state.timerIntervalId);
+  state.timerIntervalId = null;
+}
+
+function startSessionTimerTicker() {
+  stopSessionTimerTicker();
+  state.timerIntervalId = window.setInterval(renderSessionTimer, 250);
+}
+
+function pauseSessionTimer({ manual = false } = {}) {
+  if (manual) state.timerManuallyPaused = true;
+  if (state.timerRunning) state.timerElapsedMs = sessionElapsedMs();
+  state.timerStartedAt = null;
+  state.timerRunning = false;
+  stopSessionTimerTicker();
+  renderSessionTimer();
+}
+
+function resumeSessionTimer({ manual = false } = {}) {
+  if (state.timerAwayDecisionPending) {
+    renderSessionTimer();
+    return;
+  }
+  if (manual) state.timerManuallyPaused = false;
+  if (
+    state.timerRunning
+    || state.timerManuallyPaused
+    || document.hidden
+    || elements.practiceScreen.hidden
+    || !state.sessionQuestions.length
+  ) {
+    renderSessionTimer();
+    return;
+  }
+  state.timerStartedAt = Date.now();
+  state.timerRunning = true;
+  renderSessionTimer();
+  startSessionTimerTicker();
+}
+
+function resumeSessionTimerFromActivity() {
+  if (!state.timerRunning && !state.timerAwayDecisionPending) resumeSessionTimer({ manual: true });
+}
+
+function beginTimerAwayPeriod() {
+  if (elements.practiceScreen.hidden || !state.sessionQuestions.length) return;
+  const now = Date.now();
+  if (state.timerAwayDecisionPending) {
+    if (state.timerAwayStartedAt === null) state.timerAwayStartedAt = now;
+    stopSessionTimerTicker();
+    renderSessionTimer();
+    persistActiveSession();
+    return;
+  }
+  if (!state.timerRunning || state.timerManuallyPaused) {
+    persistActiveSession();
+    return;
+  }
+  if (state.timerStartedAt !== null) {
+    state.timerElapsedMs += Math.max(0, now - state.timerStartedAt);
+  }
+  state.timerStartedAt = null;
+  state.timerRunning = false;
+  state.timerAwayStartedAt = now;
+  state.timerAwayElapsedMs = 0;
+  state.timerAwayDecisionPending = true;
+  stopSessionTimerTicker();
+  renderSessionTimer();
+  persistActiveSession();
+}
+
+function finishTimerAwayPeriod() {
+  if (!state.timerAwayDecisionPending) return;
+  if (state.timerAwayStartedAt !== null) {
+    state.timerAwayElapsedMs += Math.max(0, Date.now() - state.timerAwayStartedAt);
+    state.timerAwayStartedAt = null;
+  }
+  renderSessionTimer();
+}
+
+function resolveTimerAwayPeriod(includeAwayTime) {
+  if (!state.timerAwayDecisionPending) return;
+  finishTimerAwayPeriod();
+  if (includeAwayTime) state.timerElapsedMs += state.timerAwayElapsedMs;
+  state.timerAwayStartedAt = null;
+  state.timerAwayElapsedMs = 0;
+  state.timerAwayDecisionPending = false;
+  state.timerManuallyPaused = false;
+  resumeSessionTimer({ manual: true });
+  persistActiveSession();
+}
+
+function resetSessionTimer() {
+  stopSessionTimerTicker();
+  state.timerElapsedMs = 0;
+  state.timerStartedAt = null;
+  state.timerRunning = false;
+  state.timerManuallyPaused = false;
+  state.timerAwayStartedAt = null;
+  state.timerAwayElapsedMs = 0;
+  state.timerAwayDecisionPending = false;
+  resumeSessionTimer();
+}
+
+function restoreSessionTimer(saved) {
+  stopSessionTimerTicker();
+  const savedElapsedMs = Number.isFinite(saved.timerElapsedMs) ? Math.max(0, saved.timerElapsedMs) : 0;
+  const savedManualPause = saved.timerManuallyPaused === true;
+  const savedAtMs = Number.isFinite(saved.timerSavedAt) ? saved.timerSavedAt : null;
+  let awayElapsedMs = Number.isFinite(saved.timerAwayElapsedMs) ? Math.max(0, saved.timerAwayElapsedMs) : 0;
+  let awayStartedAt = Number.isFinite(saved.timerAwayStartedAt) ? saved.timerAwayStartedAt : null;
+  let awayDecisionPending = saved.timerAwayDecisionPending === true && !savedManualPause;
+  if (!savedManualPause && !awayDecisionPending && saved.timerWasRunning === true && savedAtMs !== null) {
+    awayDecisionPending = true;
+    awayStartedAt = savedAtMs;
+  }
+  if (awayDecisionPending && awayStartedAt !== null) {
+    awayElapsedMs += Math.max(0, Date.now() - awayStartedAt);
+    awayStartedAt = null;
+  }
+  state.timerElapsedMs = savedElapsedMs;
+  state.timerStartedAt = null;
+  state.timerRunning = false;
+  state.timerManuallyPaused = savedManualPause;
+  state.timerAwayStartedAt = awayStartedAt;
+  state.timerAwayElapsedMs = awayElapsedMs;
+  state.timerAwayDecisionPending = awayDecisionPending;
+  if (awayDecisionPending) renderSessionTimer();
+  else resumeSessionTimer();
+}
+
+function clearSessionTimerState() {
+  stopSessionTimerTicker();
+  state.timerElapsedMs = 0;
+  state.timerStartedAt = null;
+  state.timerRunning = false;
+  state.timerManuallyPaused = false;
+  state.timerAwayStartedAt = null;
+  state.timerAwayElapsedMs = 0;
+  state.timerAwayDecisionPending = false;
+  renderSessionTimer();
 }
 
 function clearActiveSession() {
@@ -422,7 +825,7 @@ function clearActiveSession() {
 function readActiveSession() {
   try {
     const saved = JSON.parse(localStorage.getItem(ACTIVE_SESSION_KEY) || "null");
-    if (!saved || saved.version !== 1 || !Array.isArray(saved.questionIds)) return null;
+    if (!saved || ![1, 2, 3, 4, 5].includes(saved.version) || !Array.isArray(saved.questionIds)) return null;
     if ((saved.source || "") !== state.source) {
       clearActiveSession();
       return null;
@@ -437,17 +840,23 @@ function readActiveSession() {
 function persistActiveSession() {
   if (!state.sessionQuestions.length || !state.selectedCourse || !state.currentId) return;
   saveCurrentQuestionState();
+  const timerElapsedSnapshot = sessionElapsedMs();
+  const timerSavedAt = Date.now();
   const sessionAnswers = [...state.sessionAnswers.entries()].map(([id, saved]) => [id, {
     selections: [...saved.selections.entries()],
     gradedChoices: [...saved.gradedChoices],
     graded: saved.graded,
-    revealed: saved.revealed
+    revealed: saved.revealed,
+    enteredAnswer: saved.enteredAnswer
   }]);
   localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify({
-    version: 1,
+    version: 5,
     source: state.source,
+    selectedLearning: state.selectedLearning,
     selectedCourse: state.selectedCourse,
+    selectedUnit: state.selectedUnit,
     selectedTopic: state.selectedTopic,
+    selectedTypes: state.selectedTypes,
     sessionShuffle: state.sessionShuffle,
     rememberAnswers: state.rememberAnswers,
     reviewScope: state.reviewScope,
@@ -455,20 +864,37 @@ function persistActiveSession() {
     currentId: state.currentId,
     sessionResults: [...state.sessionResults.entries()],
     sessionAnswers,
-    savedAt: new Date().toISOString()
+    timerElapsedMs: timerElapsedSnapshot,
+    timerManuallyPaused: state.timerManuallyPaused,
+    timerWasRunning: state.timerRunning,
+    timerSavedAt,
+    timerAwayStartedAt: state.timerAwayStartedAt,
+    timerAwayElapsedMs: state.timerAwayElapsedMs,
+    timerAwayDecisionPending: state.timerAwayDecisionPending,
+    savedAt: new Date(timerSavedAt).toISOString()
   }));
 }
 
 function formatSavedSessionTitle(saved) {
-  const topic = saved.selectedTopic && saved.selectedTopic !== "すべて" ? ` / ${saved.selectedTopic}` : "";
+  const savedTypes = Array.isArray(saved.selectedTypes)
+    ? saved.selectedTypes
+    : saved.selectedTopic && saved.selectedTopic !== "すべて" ? [saved.selectedTopic] : [];
+  const typeText = savedTypes.length === 1 ? ` / ${savedTypes[0]}` : savedTypes.length > 1 ? ` / ${savedTypes.length}テーマ` : "";
+  const unitText = saved.selectedUnit ? ` / ${saved.selectedUnit}` : "";
   if (saved.selectedCourse === "シャッフル演習") return "全科目シャッフル";
-  if (saved.selectedCourse === "前回の誤答") return "前回の誤答";
-  if (saved.reviewScope?.type === "range") {
-    const course = saved.reviewScope.course === "すべて" ? "全科目" : saved.reviewScope.course;
-    return `${saved.reviewScope.startDate.replaceAll("-", "/")}〜${saved.reviewScope.endDate.replaceAll("-", "/")} / ${course}`;
+  if (saved.selectedCourse === "前回の誤答") {
+    return saved.selectedLearning ? `${saved.selectedLearning} / 前回の誤答` : "前回の誤答";
   }
-  if (saved.rememberAnswers === false) return `${saved.selectedCourse}${topic}（復習）`;
-  return `${saved.selectedCourse}${topic}${saved.sessionShuffle ? "（シャッフル）" : ""}`;
+  if (saved.reviewScope?.type === "range") {
+    const learning = saved.reviewScope.learning === "すべて" || !saved.reviewScope.learning
+      ? "全学習"
+      : saved.reviewScope.learning;
+    const course = saved.reviewScope.course === "すべて" ? "全科目" : saved.reviewScope.course;
+    return `${saved.reviewScope.startDate.replaceAll("-", "/")}〜${saved.reviewScope.endDate.replaceAll("-", "/")} / ${learning} / ${course}`;
+  }
+  const learning = saved.selectedLearning ? `${saved.selectedLearning} / ` : "";
+  if (saved.rememberAnswers === false) return `${learning}${saved.selectedCourse}${unitText}${typeText}（復習）`;
+  return `${learning}${saved.selectedCourse}${unitText}${typeText}${saved.sessionShuffle ? "（シャッフル）" : ""}`;
 }
 
 function renderResumePanel() {
@@ -501,8 +927,13 @@ function resumeActiveSession() {
     return;
   }
 
+  state.selectedLearning = saved.selectedLearning || sessionQuestions[0]?.learning || null;
   state.selectedCourse = saved.selectedCourse;
-  state.selectedTopic = saved.selectedTopic || "すべて";
+  state.selectedUnit = saved.selectedUnit || sessionQuestions[0]?.unit || null;
+  state.selectedTypes = Array.isArray(saved.selectedTypes)
+    ? saved.selectedTypes
+    : saved.selectedTopic && saved.selectedTopic !== "すべて" ? [saved.selectedTopic] : [];
+  state.selectedTopic = state.selectedTypes.length === 1 ? state.selectedTypes[0] : "すべて";
   state.sessionShuffle = saved.sessionShuffle === true;
   state.rememberAnswers = saved.rememberAnswers !== false;
   state.reviewScope = saved.reviewScope || null;
@@ -515,7 +946,8 @@ function resumeActiveSession() {
       selections: new Map(Array.isArray(savedAnswer.selections) ? savedAnswer.selections : []),
       gradedChoices: new Set(Array.isArray(savedAnswer.gradedChoices) ? savedAnswer.gradedChoices : []),
       graded: savedAnswer.graded === true,
-      revealed: savedAnswer.revealed === true
+      revealed: savedAnswer.revealed === true,
+      enteredAnswer: String(savedAnswer.enteredAnswer || "")
     }];
   }));
   const remaining = sessionQuestions.find((question) => !state.sessionResults.has(question.id));
@@ -524,16 +956,20 @@ function resumeActiveSession() {
     : remaining?.id || sessionQuestions[0].id;
   restoreQuestionState(state.currentId);
   elements.homeScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.topicScreen.hidden = true;
   elements.resultScreen.hidden = true;
   elements.historyScreen.hidden = true;
   elements.practiceScreen.hidden = false;
   elements.homeButton.hidden = false;
+  restoreSessionTimer(saved);
   renderAll();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function setCurrent(id) {
+  resumeSessionTimerFromActivity();
   saveCurrentQuestionState();
   state.currentId = id;
   restoreQuestionState(id);
@@ -542,12 +978,19 @@ function setCurrent(id) {
   persistActiveSession();
 }
 
+function formatTypesLabel(types = state.selectedTypes) {
+  const selected = Array.isArray(types) ? types.filter(Boolean) : [];
+  if (!selected.length) return "すべてのテーマ";
+  if (selected.length === 1) return selected[0];
+  return `${selected.length}テーマ`;
+}
+
 function renderCategories() {
   const questions = activeQuestions();
   const item = document.createElement("div");
   item.className = "category-item active";
   const label = document.createElement("span");
-  label.textContent = state.selectedTopic === "すべて" ? "すべての論点" : state.selectedTopic || "全科目";
+  label.textContent = formatTypesLabel();
   const badge = document.createElement("span");
   badge.textContent = questions.length;
   item.append(label, badge);
@@ -610,13 +1053,135 @@ function createChoiceElement(choice, index) {
       : answeredCorrectly
         ? `正解：${choice.correct ? "○" : "×"}`
         : `不正解 ｜ 正解：${choice.correct ? "○" : "×"}`;
-    const explanation = document.createElement("p");
-    explanation.textContent = choice.explanation || "解説はまだ登録されていません。";
-    feedback.append(verdict, explanation, createQuestionHistory(currentQuestion().id));
+    feedback.append(verdict, createQuestionHistory(currentQuestion().id));
     item.append(feedback);
   }
 
   return item;
+}
+
+function questionNoteKey(question) {
+  return JSON.stringify([state.source || "", String(question.id)]);
+}
+
+function getQuestionNote(question) {
+  const saved = state.questionNotes[questionNoteKey(question)];
+  if (typeof saved === "string") return saved;
+  return typeof saved?.text === "string" ? saved.text : "";
+}
+
+function updateQuestionNote(question, text) {
+  const key = questionNoteKey(question);
+  const nextNotes = { ...state.questionNotes };
+  if (text) nextNotes[key] = { text, updatedAt: new Date().toISOString() };
+  else delete nextNotes[key];
+  try {
+    localStorage.setItem(QUESTION_NOTES_KEY, JSON.stringify(nextNotes));
+    state.questionNotes = nextNotes;
+    return true;
+  } catch {
+    showToast("付箋を保存できませんでした。端末の保存容量を確認してください", true);
+    return false;
+  }
+}
+
+function openQuestionNoteEditor(section, question) {
+  const savedNote = getQuestionNote(question);
+  section.replaceChildren();
+  const label = document.createElement("label");
+  label.className = "question-note-editor-label";
+  label.textContent = savedNote ? "付箋を編集" : "付箋を登録";
+  const textarea = document.createElement("textarea");
+  textarea.className = "question-note-textarea";
+  textarea.maxLength = 1000;
+  textarea.placeholder = "覚えておきたいポイントや間違えた理由を入力";
+  textarea.value = savedNote;
+  textarea.setAttribute("aria-label", "この問題の付箋");
+  const count = document.createElement("span");
+  count.className = "question-note-count";
+  const updateCount = () => { count.textContent = `${textarea.value.length} / 1000`; };
+  textarea.addEventListener("input", updateCount);
+  updateCount();
+
+  const actions = document.createElement("div");
+  actions.className = "question-note-editor-actions";
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "question-note-cancel-button";
+  cancelButton.textContent = "キャンセル";
+  cancelButton.addEventListener("click", () => renderQuestionNoteSection(section, question));
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "question-note-save-button";
+  saveButton.textContent = "付箋を保存";
+  saveButton.addEventListener("click", () => {
+    const text = textarea.value.trim();
+    if (!text) {
+      showToast("付箋の内容を入力してください", true);
+      textarea.focus();
+      return;
+    }
+    if (!updateQuestionNote(question, text)) return;
+    renderQuestionNoteSection(section, question);
+    showToast("付箋を保存しました");
+  });
+  actions.append(cancelButton, saveButton);
+  if (savedNote) {
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "question-note-delete-button";
+    deleteButton.textContent = "削除";
+    deleteButton.addEventListener("click", () => {
+      if (!window.confirm("この問題の付箋を削除しますか？")) return;
+      if (!updateQuestionNote(question, "")) return;
+      renderQuestionNoteSection(section, question);
+      showToast("付箋を削除しました");
+    });
+    actions.prepend(deleteButton);
+  }
+  section.append(label, textarea, count, actions);
+  requestAnimationFrame(() => textarea.focus());
+}
+
+function renderQuestionNoteSection(section, question) {
+  const note = getQuestionNote(question);
+  section.replaceChildren();
+  section.className = "question-note";
+  const header = document.createElement("div");
+  header.className = "question-note-header";
+  const title = document.createElement("strong");
+  title.className = "question-note-title";
+  title.textContent = "付箋";
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.className = "question-note-edit-button";
+  editButton.textContent = note ? "編集" : "付箋を登録";
+  editButton.addEventListener("click", () => openQuestionNoteEditor(section, question));
+  header.append(title, editButton);
+  const body = document.createElement(note ? "div" : "p");
+  body.className = note ? "question-note-body" : "question-note-empty";
+  body.textContent = note || "この問題の付箋はまだありません。";
+  section.append(header, body);
+}
+
+function renderAnswerExplanation(question) {
+  elements.answerExplanation.replaceChildren();
+  if (!question || !state.graded) {
+    elements.answerExplanation.hidden = true;
+    return;
+  }
+
+  const choice = question.choices[0];
+  const title = document.createElement("strong");
+  title.className = "answer-explanation-title";
+  title.textContent = "解説";
+  const body = document.createElement("div");
+  body.className = "answer-explanation-text";
+  body.textContent = preserveVisibleBlankLines(choice?.explanation || "解説はまだ登録されていません。");
+  const noteSection = document.createElement("section");
+  renderQuestionNoteSection(noteSection, question);
+  elements.answerExplanation.append(title, body, noteSection);
+  elements.answerExplanation.hidden = false;
 }
 
 function createSelfAssessmentElement(question) {
@@ -631,6 +1196,7 @@ function createSelfAssessmentElement(question) {
     showAnswer.className = "show-answer-button";
     showAnswer.textContent = "答えを見る";
     showAnswer.addEventListener("click", () => {
+      resumeSessionTimerFromActivity();
       state.revealed = true;
       renderQuestion();
       persistActiveSession();
@@ -647,10 +1213,7 @@ function createSelfAssessmentElement(question) {
   const answerText = document.createElement("strong");
   answerText.className = "self-answer-text";
   answerText.textContent = choice.correct;
-  const explanation = document.createElement("p");
-  explanation.className = "self-answer-explanation";
-  explanation.textContent = choice.explanation || "解説はまだ登録されていません。";
-  answerPanel.append(answerLabel, answerText, explanation);
+  answerPanel.append(answerLabel, answerText);
   item.append(answerPanel);
 
   if (!state.graded) {
@@ -686,6 +1249,98 @@ function createSelfAssessmentElement(question) {
   return item;
 }
 
+function createNumericEntryElement(question) {
+  const choice = question.choices[0];
+  const selected = state.selections.get(0);
+  const item = document.createElement("section");
+  item.className = "self-assessment numeric-entry";
+
+  if (choice.correct === null) {
+    item.classList.add("unconfigured");
+    const warning = document.createElement("div");
+    warning.className = "numeric-entry-warning";
+    const title = document.createElement("strong");
+    title.textContent = "正解の数字が未登録です";
+    const detail = document.createElement("p");
+    detail.textContent = "スプレッドシートの「回答」列に正解の数字を入力し、右上の更新ボタンで同期してください。";
+    warning.append(title, detail);
+    item.append(warning);
+    return item;
+  }
+
+  if (!state.graded) {
+    const form = document.createElement("form");
+    form.className = "numeric-entry-form";
+    const label = document.createElement("label");
+    label.className = "numeric-entry-label";
+    label.textContent = "数字で回答";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "numeric-entry-input";
+    input.inputMode = "numeric";
+    input.pattern = "[0-9]*";
+    input.maxLength = 20;
+    input.autocomplete = "off";
+    input.enterKeyHint = "done";
+    input.placeholder = "数字を入力";
+    input.setAttribute("aria-label", "数字で回答");
+    input.value = state.enteredAnswer;
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.className = "numeric-entry-submit";
+    submit.textContent = "回答する";
+    submit.disabled = !state.enteredAnswer;
+    const help = document.createElement("p");
+    help.className = "numeric-entry-help";
+    help.textContent = "半角・全角どちらでも入力できます";
+
+    input.addEventListener("input", () => {
+      const normalized = normalizeNumericEntry(input.value);
+      if (input.value !== normalized) input.value = normalized;
+      state.enteredAnswer = normalized;
+      submit.disabled = !normalized;
+      persistActiveSession();
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!state.enteredAnswer) return;
+      resumeSessionTimerFromActivity();
+      state.revealed = true;
+      const isCorrect = canonicalNumericAnswer(state.enteredAnswer) === canonicalNumericAnswer(choice.correct);
+      state.selections.set(0, isCorrect);
+      state.gradedChoices.add(0);
+      updateQuestionCompletion();
+      requestAnimationFrame(() => {
+        elements.answerForm.scrollTo({ top: elements.answerForm.scrollHeight, behavior: "smooth" });
+      });
+    });
+
+    label.append(input);
+    form.append(label, submit, help);
+    item.append(form);
+    return item;
+  }
+
+  const answerPanel = document.createElement("div");
+  answerPanel.className = "self-answer-panel";
+  const answerLabel = document.createElement("span");
+  answerLabel.className = "self-answer-label";
+  answerLabel.textContent = "入力した回答";
+  const answerText = document.createElement("strong");
+  answerText.className = "self-answer-text";
+  answerText.textContent = state.enteredAnswer;
+  answerPanel.append(answerLabel, answerText);
+  item.append(answerPanel);
+
+  item.classList.add(selected ? "correct" : "incorrect");
+  const result = document.createElement("div");
+  result.className = "self-assessment-result";
+  result.textContent = selected ? "正解です" : `不正解です　正解：${choice.correct}`;
+  item.append(result, createQuestionHistory(question.id));
+
+  return item;
+}
+
 function renderQuestion() {
   const filtered = filteredQuestions();
   const question = currentQuestion();
@@ -693,9 +1348,11 @@ function renderQuestion() {
 
   if (!question) {
     elements.questionNumber.textContent = "NO QUESTIONS";
+    elements.sheetQuestionNumber.textContent = "問題番号 --";
     elements.difficultyBadge.textContent = "—";
     elements.questionText.textContent = "表示できる問題がありません";
-    elements.questionHint.textContent = "スプレッドシートの科目・問題文・回答を確認してください。";
+    elements.questionHint.hidden = true;
+    renderAnswerExplanation(null);
     elements.revealButton.disabled = true;
     elements.nextButton.hidden = true;
     elements.mistakeButton.hidden = true;
@@ -711,26 +1368,40 @@ function renderQuestion() {
   elements.jumpButton.disabled = filtered.length <= 1;
   elements.skipButton.disabled = state.graded || index < 0 || index >= filtered.length - 1;
   elements.questionNumber.textContent = `QUESTION ${String(index + 1).padStart(2, "0")} / ${filtered.length}`;
+  elements.sheetQuestionNumber.textContent = `問題番号 ${question.sourceNumber || question.id}`;
   elements.difficultyBadge.textContent = question.difficulty;
-  elements.questionText.textContent = question.question;
+  elements.questionText.textContent = formatQuestionText(question.question);
   const isSelfAssessment = question.mode === "self-assessment";
-  elements.questionHint.textContent = isSelfAssessment
-    ? `${question.context}\n答えを思い出してから確認してください。`
-    : `${question.context || "次の記述を判定してください。"}\n○か×を選んでください。`;
+  const isNumericEntry = question.mode === "numeric-entry";
+  const usesSelfGrading = isSelfAssessment || isNumericEntry;
+  elements.questionHint.hidden = true;
+  elements.questionHint.textContent = "";
   elements.choiceList.replaceChildren(
-    ...(isSelfAssessment ? [createSelfAssessmentElement(question)] : question.choices.map(createChoiceElement))
+    ...(isSelfAssessment
+      ? [createSelfAssessmentElement(question)]
+      : isNumericEntry
+        ? [createNumericEntryElement(question)]
+        : question.choices.map(createChoiceElement))
   );
-  elements.answerForm.classList.toggle("answered", state.graded || (isSelfAssessment && state.revealed));
-  elements.revealButton.hidden = state.graded || isSelfAssessment;
+  elements.answerForm.classList.toggle("answered", state.graded || (usesSelfGrading && state.revealed));
+  elements.revealButton.hidden = state.graded || usesSelfGrading;
   elements.revealButton.disabled = state.graded;
   elements.revealButton.querySelector("span").textContent = state.graded ? "解説を表示中" : "正解・解説を見る";
-  elements.cardActions.hidden = state.graded || isSelfAssessment;
+  elements.cardActions.hidden = state.graded || usesSelfGrading;
   elements.nextButton.hidden = !state.graded;
   elements.nextButton.disabled = false;
   elements.nextButtonLabel.textContent = index === filtered.length - 1 ? "演習完了" : "次の問題";
-  elements.mistakeButton.hidden = !state.graded
-    || state.selections.size === 0
-    || state.sessionResults.get(question.id) === true;
+  renderAnswerExplanation(question);
+  const recordedResult = state.sessionResults.get(question.id);
+  const canCorrectResult = state.graded
+    && state.selections.size > 0
+    && typeof recordedResult === "boolean";
+  elements.mistakeButton.hidden = !canCorrectResult;
+  if (canCorrectResult) {
+    const targetLabel = recordedResult ? "不正解" : "正解";
+    elements.mistakeButton.textContent = `押し間違い（${targetLabel}に修正）`;
+    elements.mistakeButton.setAttribute("aria-label", `この回答を${targetLabel}として記録し直す`);
+  }
 }
 
 function renderProgress() {
@@ -749,11 +1420,11 @@ function renderProgress() {
 }
 
 function renderAll() {
-  const topicLabel = state.selectedTopic && state.selectedTopic !== "すべて" ? state.selectedTopic : "ALL TOPICS";
+  const topicLabel = state.selectedTypes.length === 1 ? state.selectedTypes[0] : state.selectedTypes.length > 1 ? `${state.selectedTypes.length} THEMES` : "ALL THEMES";
   elements.categoryEyebrow.textContent = !state.rememberAnswers
     ? `${topicLabel} / REVIEW`
     : state.sessionShuffle ? `${topicLabel} / SHUFFLE` : topicLabel;
-  elements.courseTitle.textContent = state.selectedCourse || "社労士 問題演習";
+  elements.courseTitle.textContent = [state.selectedCourse, state.selectedUnit].filter(Boolean).join(" / ") || "社労士 問題演習";
   renderCategories();
   renderQuestion();
   renderProgress();
@@ -796,7 +1467,14 @@ function formatDateInput(date) {
   return `${year}-${month}-${day}`;
 }
 
-function questionsMistakenInRange(startValue, endValue, course = "すべて") {
+function questionsForReviewScope(learning = "すべて", course = "すべて") {
+  return state.questions.filter((question) => (
+    (learning === "すべて" || question.learning === learning)
+    && (course === "すべて" || question.course === course)
+  ));
+}
+
+function questionsMistakenInRange(startValue, endValue, learning = "すべて", course = "すべて") {
   const start = localDateBoundary(startValue);
   const end = localDateBoundary(endValue, true);
   if (!start || !end || start > end) return [];
@@ -808,37 +1486,86 @@ function questionsMistakenInRange(startValue, endValue, course = "すべて") {
     const timestamp = new Date(record.timestamp);
     const id = String(record.questionId);
     if (Number.isNaN(timestamp.getTime()) || timestamp < start || timestamp > end || seen.has(id)) return;
-    if (course !== "すべて" && record.course !== course) return;
     const question = questionsById.get(id);
     if (!question) return;
+    if (learning !== "すべて" && question.learning !== learning) return;
+    if (course !== "すべて" && question.course !== course) return;
     seen.add(id);
     questions.push(question);
   });
   return questions;
 }
 
-function updateRangeReviewCount() {
-  const questions = questionsMistakenInRange(
-    elements.reviewStartDate.value,
-    elements.reviewEndDate.value,
-    elements.reviewCourseSelect.value
-  );
-  const validRange = localDateBoundary(elements.reviewStartDate.value)
+function updateReviewDialogCount() {
+  const learning = elements.reviewLearningSelect.value;
+  const course = elements.reviewCourseSelect.value;
+  const isLatest = state.reviewDialogMode === "latest";
+  const questions = isLatest
+    ? latestIncorrectQuestions(questionsForReviewScope(learning, course))
+    : questionsMistakenInRange(
+      elements.reviewStartDate.value,
+      elements.reviewEndDate.value,
+      learning,
+      course
+    );
+  const validRange = isLatest || (
+    localDateBoundary(elements.reviewStartDate.value)
     && localDateBoundary(elements.reviewEndDate.value, true)
-    && elements.reviewStartDate.value <= elements.reviewEndDate.value;
+    && elements.reviewStartDate.value <= elements.reviewEndDate.value
+  );
   elements.rangeReviewCount.textContent = `対象 ${questions.length}問`;
   elements.rangeReviewStartButton.disabled = !validRange || questions.length === 0;
   return questions;
 }
 
-function openRangeReviewDialog() {
+function openReviewDialog(mode) {
+  state.reviewDialogMode = mode;
+  const isLatest = mode === "latest";
   const today = new Date();
   const weekAgo = new Date(today);
   weekAgo.setDate(today.getDate() - 6);
   if (!elements.reviewStartDate.value) elements.reviewStartDate.value = formatDateInput(weekAgo);
   if (!elements.reviewEndDate.value) elements.reviewEndDate.value = formatDateInput(today);
-  updateRangeReviewCount();
+  elements.reviewDialogEyebrow.textContent = isLatest ? "LATEST REVIEW" : "DATED REVIEW";
+  elements.reviewDialogTitle.textContent = isLatest ? "前回の誤答" : "期間指定復習";
+  elements.reviewDialogCopy.textContent = isLatest
+    ? "直近の回答が不正解の問題だけを、記録せずにやり直します。"
+    : "指定期間中に間違えた問題だけを、記録せずにやり直します。";
+  elements.reviewDateFields.hidden = isLatest;
+  elements.reviewStartDate.required = !isLatest;
+  elements.reviewEndDate.required = !isLatest;
+  renderReviewFilterOptions();
+  updateReviewDialogCount();
   elements.rangeReviewDialog.showModal();
+}
+
+function renderReviewLearningOptions() {
+  const previous = elements.reviewLearningSelect.value || "すべて";
+  const available = new Set(state.questions.map((question) => question.learning));
+  const configured = LEARNINGS.map((learning) => learning.id).filter((learning) => available.has(learning));
+  const extras = [...available].filter((learning) => !configured.includes(learning));
+  const learnings = [...configured, ...extras];
+  const options = [new Option("すべての学習", "すべて")];
+  learnings.forEach((learning) => options.push(new Option(learning, learning)));
+  elements.reviewLearningSelect.replaceChildren(...options);
+  elements.reviewLearningSelect.value = learnings.includes(previous) ? previous : "すべて";
+}
+
+function renderReviewCourseOptions() {
+  const previous = elements.reviewCourseSelect.value || "すべて";
+  const learning = elements.reviewLearningSelect.value;
+  const courses = [...new Set(state.questions
+    .filter((question) => learning === "すべて" || question.learning === learning)
+    .map((question) => question.course))];
+  const options = [new Option("すべての科目", "すべて")];
+  courses.forEach((course) => options.push(new Option(course, course)));
+  elements.reviewCourseSelect.replaceChildren(...options);
+  elements.reviewCourseSelect.value = courses.includes(previous) ? previous : "すべて";
+}
+
+function renderReviewFilterOptions() {
+  renderReviewLearningOptions();
+  renderReviewCourseOptions();
 }
 
 function renderHome() {
@@ -859,25 +1586,35 @@ function renderHome() {
     && state.mistakeLog.length === 0
     && !readActiveSession();
   renderResumePanel();
+  renderReviewFilterOptions();
 
-  elements.courseGrid.replaceChildren(...COURSES.map((course) => {
-    const questions = state.questions.filter((item) => item.course === course.id);
+  const subjectKeys = new Set();
+  const subjects = state.questions.reduce((items, question) => {
+    const key = `${question.learning}\u0000${question.course}`;
+    if (subjectKeys.has(key)) return items;
+    subjectKeys.add(key);
+    items.push({ learning: question.learning, course: question.course });
+    return items;
+  }, []);
+
+  elements.courseGrid.replaceChildren(...subjects.map(({ learning, course }) => {
+    const questions = state.questions.filter((item) => item.learning === learning && item.course === course);
     const ids = new Set(questions.map((item) => item.id));
     const done = [...state.answered].filter((id) => ids.has(id)).length;
     const card = document.createElement("button");
     card.type = "button";
-    card.className = `course-card ${course.className}`;
-    card.disabled = questions.length === 0;
-    card.innerHTML = `
-      <span class="course-number">${course.number}</span>
-      <span class="course-kicker">${course.kicker}</span>
-      <strong>${course.id}</strong>
-      <span class="course-description">${course.description}</span>
-      <span class="course-footer">
-        <span>${questions.length ? `${done} / ${questions.length} 問完了` : "問題準備中"}</span>
-        <span class="course-arrow">→</span>
-      </span>`;
-    card.addEventListener("click", () => showTopics(course.id));
+    card.className = "subject-card";
+    const copy = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = course;
+    const count = document.createElement("small");
+    count.textContent = `${done} / ${questions.length} 問完了`;
+    const arrow = document.createElement("span");
+    arrow.className = "course-arrow";
+    arrow.textContent = "→";
+    copy.append(title, count);
+    card.append(copy, arrow);
+    card.addEventListener("click", () => showUnits(learning, course));
     return card;
   }));
 }
@@ -891,81 +1628,217 @@ function shuffleQuestions(questions) {
   return shuffled;
 }
 
-function renderTopicScreen(courseId) {
-  const courseQuestions = state.questions.filter((item) => item.course === courseId);
-  const topicNames = [...new Set(courseQuestions.map((item) => item.topic))];
-  const options = [
-    { id: "すべて", label: "すべての論点", questions: courseQuestions },
-    ...topicNames.map((topic) => ({
-      id: topic,
-      label: topic,
-      questions: courseQuestions.filter((item) => item.topic === topic)
-    }))
-  ];
-
-  elements.topicCourseLabel.textContent = courseId;
-  elements.topicTitle.textContent = `${courseId}の論点`;
-  elements.topicGrid.replaceChildren(...options.map((option) => {
-    const ids = new Set(option.questions.map((item) => item.id));
+function renderSubjectScreen(learningId) {
+  const learningQuestions = state.questions.filter((item) => item.learning === learningId);
+  const courses = [...new Set(learningQuestions.map((item) => item.course))];
+  elements.subjectLearningLabel.textContent = learningId;
+  elements.subjectTitle.textContent = `${learningId}の科目`;
+  elements.subjectGrid.replaceChildren(...courses.map((course) => {
+    const questions = learningQuestions.filter((item) => item.course === course);
+    const ids = new Set(questions.map((item) => item.id));
     const done = [...state.answered].filter((id) => ids.has(id)).length;
-    const card = document.createElement("article");
-    card.className = "topic-card";
-    const info = document.createElement("div");
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "subject-card";
+    const copy = document.createElement("span");
     const title = document.createElement("strong");
-    title.className = "topic-card-title";
-    title.textContent = option.label;
-    const count = document.createElement("span");
-    count.className = "topic-card-count";
-    count.textContent = `${done} / ${option.questions.length} 問完了`;
-    info.append(title, count);
-
-    const actions = document.createElement("div");
-    actions.className = "topic-card-actions";
-    const startButton = document.createElement("button");
-    startButton.type = "button";
-    startButton.className = "topic-start-button";
-    startButton.textContent = "順番に解く";
-    startButton.addEventListener("click", () => startCourse(courseId, option.id, false));
-    const shuffleButton = document.createElement("button");
-    shuffleButton.type = "button";
-    shuffleButton.className = "topic-shuffle-button";
-    shuffleButton.textContent = "シャッフル";
-    shuffleButton.addEventListener("click", () => startCourse(courseId, option.id, true));
-    const reviewQuestions = latestIncorrectQuestions(option.questions);
-    const reviewButton = document.createElement("button");
-    reviewButton.type = "button";
-    reviewButton.className = "topic-review-button";
-    reviewButton.textContent = `復習 ${reviewQuestions.length}問`;
-    reviewButton.disabled = reviewQuestions.length === 0;
-    reviewButton.addEventListener("click", () => startMistakesMode(courseId, option.id));
-    actions.append(startButton, shuffleButton, reviewButton);
-    card.append(info, actions);
+    title.textContent = course;
+    const count = document.createElement("small");
+    count.textContent = `${done} / ${questions.length} 問完了`;
+    const arrow = document.createElement("span");
+    arrow.className = "course-arrow";
+    arrow.textContent = "→";
+    copy.append(title, count);
+    card.append(copy, arrow);
+    card.addEventListener("click", () => showUnits(learningId, course));
     return card;
   }));
 }
 
-function showTopics(courseId) {
-  if (!state.questions.some((item) => item.course === courseId)) return;
-  state.selectedCourse = courseId;
+function showSubjects(learningId) {
+  if (!state.questions.some((item) => item.learning === learningId)) return;
+  state.selectedLearning = learningId;
+  state.selectedCourse = null;
+  state.selectedUnit = null;
   state.selectedTopic = null;
+  state.selectedTypes = [];
   state.sessionQuestions = [];
   state.sessionShuffle = false;
   state.rememberAnswers = true;
   state.reviewScope = null;
   elements.homeScreen.hidden = true;
+  elements.unitScreen.hidden = true;
+  elements.topicScreen.hidden = true;
+  elements.practiceScreen.hidden = true;
+  elements.resultScreen.hidden = true;
+  elements.historyScreen.hidden = true;
+  elements.subjectScreen.hidden = false;
+  elements.homeButton.hidden = false;
+  renderSubjectScreen(learningId);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderUnitScreen(learningId = state.selectedLearning, courseId = state.selectedCourse) {
+  const courseQuestions = state.questions.filter((item) => item.learning === learningId && item.course === courseId);
+  const units = [...new Set(courseQuestions.map((item) => item.unit))];
+  elements.unitLearningLabel.textContent = `${learningId} / ${courseId}`;
+  elements.unitTitle.textContent = `${courseId}の単元`;
+  elements.unitGrid.replaceChildren(...units.map((unit) => {
+    const questions = courseQuestions.filter((item) => item.unit === unit);
+    const ids = new Set(questions.map((item) => item.id));
+    const done = [...state.answered].filter((id) => ids.has(id)).length;
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "subject-card";
+    const copy = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = unit;
+    const count = document.createElement("small");
+    count.textContent = `${done} / ${questions.length} 問完了`;
+    const arrow = document.createElement("span");
+    arrow.className = "course-arrow";
+    arrow.textContent = "→";
+    copy.append(title, count);
+    card.append(copy, arrow);
+    card.addEventListener("click", () => showThemes(learningId, courseId, unit));
+    return card;
+  }));
+}
+
+function showUnits(learningId, courseId) {
+  const courseQuestions = state.questions.filter((item) => item.learning === learningId && item.course === courseId);
+  if (!courseQuestions.length) return;
+  state.selectedLearning = learningId;
+  state.selectedCourse = courseId;
+  state.selectedUnit = null;
+  state.selectedTopic = null;
+  state.selectedTypes = [];
+  state.sessionQuestions = [];
+  state.sessionShuffle = false;
+  state.rememberAnswers = true;
+  state.reviewScope = null;
+  elements.homeScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.topicScreen.hidden = true;
+  elements.practiceScreen.hidden = true;
+  elements.resultScreen.hidden = true;
+  elements.historyScreen.hidden = true;
+  elements.unitScreen.hidden = false;
+  elements.homeButton.hidden = false;
+  renderUnitScreen(learningId, courseId);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function selectedTypeQuestions() {
+  const selected = new Set(state.selectedTypes);
+  return state.questions.filter((item) => (
+    item.learning === state.selectedLearning
+    && item.course === state.selectedCourse
+    && item.unit === state.selectedUnit
+    && selected.has(item.type)
+  ));
+}
+
+function updateTypeSelectionSummary() {
+  const courseQuestions = state.questions.filter((item) => (
+    item.learning === state.selectedLearning
+    && item.course === state.selectedCourse
+    && item.unit === state.selectedUnit
+  ));
+  const typeNames = [...new Set(courseQuestions.map((item) => item.type))];
+  const selected = new Set(state.selectedTypes);
+  const selectedQuestions = courseQuestions.filter((item) => selected.has(item.type));
+  const reviewQuestions = latestIncorrectQuestions(selectedQuestions);
+  elements.typeSelectionCount.textContent = `${state.selectedTypes.length}テーマ・${selectedQuestions.length}問`;
+  elements.selectedTypesStartButton.disabled = selectedQuestions.length === 0;
+  elements.selectedTypesShuffleButton.disabled = selectedQuestions.length === 0;
+  elements.selectedTypesReviewButton.disabled = reviewQuestions.length === 0;
+  elements.selectedTypesReviewButton.textContent = `復習 ${reviewQuestions.length}問`;
+  elements.selectAllTypes.checked = typeNames.length > 0 && state.selectedTypes.length === typeNames.length;
+  elements.selectAllTypes.indeterminate = state.selectedTypes.length > 0 && state.selectedTypes.length < typeNames.length;
+}
+
+function renderTopicScreen(learningId = state.selectedLearning, courseId = state.selectedCourse, unitId = state.selectedUnit) {
+  const courseQuestions = state.questions.filter(
+    (item) => item.learning === learningId && item.course === courseId && item.unit === unitId
+  );
+  const typeNames = [...new Set(courseQuestions.map((item) => item.type))];
+  state.selectedTypes = typeNames.filter((type) => state.selectedTypes.includes(type));
+  elements.topicCourseLabel.textContent = `${learningId} / ${courseId} / ${unitId}`;
+  elements.topicTitle.textContent = `${unitId}のテーマ`;
+  elements.topicDescription.textContent = "演習するテーマは複数選択できます。";
+  elements.typeSelectionToolbar.hidden = false;
+  elements.topicGrid.hidden = false;
+  elements.selectedTypesStartButton.textContent = "選択したテーマを順番に解く";
+  elements.selectedTypesShuffleButton.textContent = "選択したテーマをシャッフル";
+  elements.topicGrid.replaceChildren(...typeNames.map((type) => {
+    const questions = courseQuestions.filter((item) => item.type === type);
+    const ids = new Set(questions.map((item) => item.id));
+    const done = [...state.answered].filter((id) => ids.has(id)).length;
+    const option = document.createElement("label");
+    option.className = "type-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = type;
+    checkbox.checked = state.selectedTypes.includes(type);
+    const copy = document.createElement("span");
+    copy.className = "type-option-copy";
+    const title = document.createElement("strong");
+    title.className = "type-option-title";
+    title.textContent = type;
+    const count = document.createElement("span");
+    count.className = "type-option-count";
+    count.textContent = `${done} / ${questions.length} 問完了`;
+    copy.append(title, count);
+    option.append(checkbox, copy);
+    checkbox.addEventListener("change", () => {
+      const selected = new Set(state.selectedTypes);
+      if (checkbox.checked) selected.add(type);
+      else selected.delete(type);
+      state.selectedTypes = typeNames.filter((name) => selected.has(name));
+      updateTypeSelectionSummary();
+    });
+    return option;
+  }));
+  updateTypeSelectionSummary();
+}
+
+function showThemes(learningId, courseId, unitId) {
+  const courseQuestions = state.questions.filter(
+    (item) => item.learning === learningId && item.course === courseId && item.unit === unitId
+  );
+  if (!courseQuestions.length) return;
+  state.selectedLearning = learningId;
+  state.selectedCourse = courseId;
+  state.selectedUnit = unitId;
+  state.selectedTypes = [...new Set(courseQuestions.map((item) => item.type))];
+  state.selectedTopic = "すべて";
+  state.sessionQuestions = [];
+  state.sessionShuffle = false;
+  state.rememberAnswers = true;
+  state.reviewScope = null;
+  elements.homeScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.practiceScreen.hidden = true;
   elements.resultScreen.hidden = true;
   elements.historyScreen.hidden = true;
   elements.topicScreen.hidden = false;
   elements.homeButton.hidden = false;
-  renderTopicScreen(courseId);
+  renderTopicScreen(learningId, courseId, unitId);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function showHome() {
-  if (!elements.practiceScreen.hidden && state.sessionQuestions.length) persistActiveSession();
+  if (!elements.practiceScreen.hidden && state.sessionQuestions.length) {
+    pauseSessionTimer();
+    persistActiveSession();
+  }
+  state.selectedLearning = null;
   state.selectedCourse = null;
+  state.selectedUnit = null;
   state.selectedTopic = null;
+  state.selectedTypes = [];
   state.sessionQuestions = [];
   state.sessionShuffle = false;
   state.rememberAnswers = true;
@@ -976,21 +1849,36 @@ function showHome() {
   elements.practiceScreen.hidden = true;
   elements.resultScreen.hidden = true;
   elements.historyScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.topicScreen.hidden = true;
   elements.homeScreen.hidden = false;
   elements.homeButton.hidden = true;
+  clearSessionTimerState();
   renderHome();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function startCourse(courseId, topic = "すべて", shuffled = false) {
+function startCourse(learningId, courseId, unitId, types = [], shuffled = false) {
+  const availableTypes = [...new Set(state.questions
+    .filter((item) => item.learning === learningId && item.course === courseId && item.unit === unitId)
+    .map((item) => item.type))];
+  const requestedTypes = Array.isArray(types) ? types : types === "すべて" ? availableTypes : [types];
+  const selectedTypes = availableTypes.filter((type) => requestedTypes.includes(type));
+  const selected = new Set(selectedTypes);
   const courseQuestions = state.questions.filter(
-    (item) => item.course === courseId && (topic === "すべて" || item.topic === topic)
+    (item) => item.learning === learningId
+      && item.course === courseId
+      && item.unit === unitId
+      && selected.has(item.type)
   );
   const firstQuestion = courseQuestions[0];
   if (!firstQuestion) return;
+  state.selectedLearning = learningId;
   state.selectedCourse = courseId;
-  state.selectedTopic = topic;
+  state.selectedUnit = unitId;
+  state.selectedTypes = selectedTypes;
+  state.selectedTopic = selectedTypes.length === 1 ? selectedTypes[0] : "すべて";
   state.sessionShuffle = shuffled;
   state.sessionQuestions = shuffled ? shuffleQuestions(courseQuestions) : courseQuestions;
   state.selectedCategory = "すべて";
@@ -1003,9 +1891,12 @@ function startCourse(courseId, topic = "すべて", shuffled = false) {
   elements.homeScreen.hidden = true;
   elements.resultScreen.hidden = true;
   elements.historyScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.topicScreen.hidden = true;
   elements.practiceScreen.hidden = false;
   elements.homeButton.hidden = false;
+  resetSessionTimer();
   renderAll();
   persistActiveSession();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1014,8 +1905,11 @@ function startCourse(courseId, topic = "すべて", shuffled = false) {
 function startShuffle() {
   if (!state.questions.length) return;
   const shuffled = shuffleQuestions(state.questions);
+  state.selectedLearning = null;
   state.selectedCourse = "シャッフル演習";
+  state.selectedUnit = null;
   state.selectedTopic = "すべて";
+  state.selectedTypes = [];
   state.sessionShuffle = true;
   state.sessionQuestions = shuffled;
   state.selectedCategory = "すべて";
@@ -1028,18 +1922,24 @@ function startShuffle() {
   elements.homeScreen.hidden = true;
   elements.resultScreen.hidden = true;
   elements.historyScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.topicScreen.hidden = true;
   elements.practiceScreen.hidden = false;
   elements.homeButton.hidden = false;
+  resetSessionTimer();
   renderAll();
   persistActiveSession();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function startReviewSession(questions, { title, topic = "すべて", scope }) {
+function startReviewSession(questions, { title, learning = null, unit = null, types = [], scope }) {
   if (!questions.length) return;
+  state.selectedLearning = learning;
   state.selectedCourse = title;
-  state.selectedTopic = topic;
+  state.selectedUnit = unit;
+  state.selectedTypes = Array.isArray(types) ? types : [];
+  state.selectedTopic = state.selectedTypes.length === 1 ? state.selectedTypes[0] : "すべて";
   state.sessionShuffle = false;
   state.rememberAnswers = false;
   state.reviewScope = scope;
@@ -1052,35 +1952,66 @@ function startReviewSession(questions, { title, topic = "すべて", scope }) {
   elements.homeScreen.hidden = true;
   elements.resultScreen.hidden = true;
   elements.historyScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.topicScreen.hidden = true;
   elements.practiceScreen.hidden = false;
   elements.homeButton.hidden = false;
+  resetSessionTimer();
   renderAll();
   persistActiveSession();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function startMistakesMode(courseId = null, topic = "すべて") {
+function startSessionMistakesReview(questions, learning = state.selectedLearning) {
+  if (!questions.length) return;
+  startReviewSession(questions, {
+    title: "今回の誤答",
+    learning,
+    scope: {
+      type: "session-mistakes",
+      learning,
+      questionIds: questions.map((question) => question.id)
+    }
+  });
+}
+
+function retryCurrentSessionMistakes() {
+  const questions = activeQuestions().filter((question) => state.sessionResults.get(question.id) === false);
+  const sourceLearning = state.reviewScope?.type === "session-mistakes"
+    ? state.reviewScope.learning
+    : state.selectedLearning;
+  startSessionMistakesReview(questions, sourceLearning);
+}
+
+function startMistakesMode(learningId = null, courseId = null, unitId = null, types = []) {
+  const selected = new Set(Array.isArray(types) ? types : []);
   const scopeQuestions = state.questions.filter(
-    (item) => (!courseId || item.course === courseId) && (topic === "すべて" || item.topic === topic)
+    (item) => (!learningId || item.learning === learningId)
+      && (!courseId || item.course === courseId)
+      && (!unitId || item.unit === unitId)
+      && (!selected.size || selected.has(item.type))
   );
   const questions = latestIncorrectQuestions(scopeQuestions);
   startReviewSession(questions, {
     title: courseId || "前回の誤答",
-    topic,
-    scope: { type: "latest", courseId, topic }
+    learning: learningId,
+    unit: unitId,
+    types,
+    scope: { type: "latest", learningId, courseId, unitId, types }
   });
 }
 
-function startDateRangeReview(startDate, endDate, course = "すべて") {
-  const questions = questionsMistakenInRange(startDate, endDate, course);
+function startDateRangeReview(startDate, endDate, learning = "すべて", course = "すべて") {
+  const questions = questionsMistakenInRange(startDate, endDate, learning, course);
   if (!questions.length) {
     showToast("指定期間に該当する誤答がありません", true);
     return;
   }
   startReviewSession(questions, {
     title: course === "すべて" ? "期間指定復習" : `${course}・期間指定復習`,
-    scope: { type: "range", startDate, endDate, course }
+    learning: learning === "すべて" ? null : learning,
+    scope: { type: "range", startDate, endDate, learning, course }
   });
 }
 
@@ -1101,8 +2032,13 @@ function resetLearningMemory() {
   showToast("進捗と回答履歴をリセットしました");
 }
 
+function isSelfGradedQuestion(question) {
+  return question?.mode === "self-assessment" || question?.mode === "numeric-entry";
+}
+
 function completeQuestion(message, className) {
   const question = currentQuestion();
+  resumeSessionTimerFromActivity();
   const alreadyRecorded = state.sessionResults.has(question.id);
   state.graded = true;
   state.sessionResults.set(question.id, className === "correct");
@@ -1113,15 +2049,31 @@ function completeQuestion(message, className) {
   if (state.rememberAnswers && !alreadyRecorded) {
     const selected = state.selections.get(0);
     const isSelfAssessment = question.mode === "self-assessment";
+    const isNumericEntry = question.mode === "numeric-entry";
+    const selectedAnswer = isNumericEntry
+      ? state.enteredAnswer
+      : selected === undefined
+        ? "未回答"
+        : isSelfAssessment
+          ? (selected ? "正解" : "不正解")
+          : (selected ? "○" : "×");
     const record = {
       attemptId: createAttemptId(),
       timestamp: new Date().toISOString(),
       questionId: question.id,
+      learning: question.learning,
       course: question.course,
-      topic: question.topic,
+      unit: question.unit,
+      theme: question.type,
+      type: question.type,
+      topic: question.type,
       question: question.question,
-      selected: selected === undefined ? "未回答" : isSelfAssessment ? selected ? "正解" : "不正解" : selected ? "○" : "×",
-      correctAnswer: isSelfAssessment ? question.choices[0].correct : question.choices[0].correct ? "○" : "×",
+      selected: selectedAnswer,
+      correctAnswer: isNumericEntry
+        ? question.choices[0].correct ?? "未登録"
+        : isSelfAssessment
+          ? question.choices[0].correct
+          : question.choices[0].correct ? "○" : "×",
       isCorrect: className === "correct"
     };
     state.history.unshift(record);
@@ -1145,34 +2097,47 @@ function updateQuestionCompletion() {
   const question = currentQuestion();
   if (!question) return;
   if (state.gradedChoices.size < question.choices.length) return;
-  const allCorrect = question.mode === "self-assessment"
+  const allCorrect = isSelfGradedQuestion(question)
     ? state.selections.get(0) === true
     : question.choices.every((choice, index) => state.selections.get(index) === choice.correct);
   completeQuestion(allCorrect ? "正解です。" : "不正解です。解説を確認しましょう。", allCorrect ? "correct" : "incorrect");
 }
 
+function isSameAttempt(record, target) {
+  return target.attemptId
+    ? record.attemptId === target.attemptId
+    : record.timestamp === target.timestamp
+      && String(record.questionId) === String(target.questionId);
+}
+
 function correctAccidentalTap() {
   const question = currentQuestion();
-  if (!question || state.sessionResults.get(question.id) !== false) return;
+  const currentResult = question ? state.sessionResults.get(question.id) : undefined;
+  if (!question || typeof currentResult !== "boolean" || state.selections.size === 0) return;
+  resumeSessionTimerFromActivity();
 
-  const correctAnswer = question.mode === "self-assessment" ? true : question.choices[0].correct;
-  state.selections.set(0, correctAnswer);
+  const nextResult = !currentResult;
+  const correctedSelection = isSelfGradedQuestion(question)
+    ? nextResult
+    : nextResult ? question.choices[0].correct : !question.choices[0].correct;
+  state.selections.set(0, correctedSelection);
   state.gradedChoices.add(0);
-  state.sessionResults.set(question.id, true);
+  state.sessionResults.set(question.id, nextResult);
 
   const record = state.rememberAnswers
     ? state.history.find((item) => String(item.questionId) === String(question.id))
     : null;
   if (record) {
-    record.selected = question.mode === "self-assessment" ? "正解" : record.correctAnswer;
-    record.isCorrect = true;
+    record.selected = question.mode === "numeric-entry"
+      ? state.enteredAnswer
+      : question.mode === "self-assessment"
+        ? (nextResult ? "正解" : "不正解")
+        : (correctedSelection ? "○" : "×");
+    record.isCorrect = nextResult;
     record.corrected = true;
     localStorage.setItem("loopnote-history", JSON.stringify(state.history));
-    state.mistakeLog = state.mistakeLog.filter((item) => (
-      record.attemptId
-        ? item.attemptId !== record.attemptId
-        : !(item.timestamp === record.timestamp && String(item.questionId) === String(record.questionId))
-    ));
+    state.mistakeLog = state.mistakeLog.filter((item) => !isSameAttempt(item, record));
+    if (!nextResult) state.mistakeLog.unshift({ ...record });
     saveMistakeLog();
   }
 
@@ -1180,7 +2145,7 @@ function correctAccidentalTap() {
   persistActiveSession();
   renderQuestion();
   renderProgress();
-  showToast("正解として記録しました");
+  showToast(`${nextResult ? "正解" : "不正解"}として記録し直しました`);
 }
 
 function revealAnswers() {
@@ -1235,10 +2200,17 @@ function openJumpDialog() {
 
 function showResults() {
   const questions = activeQuestions();
+  pauseSessionTimer();
+  const elapsedMs = state.timerElapsedMs;
+  const answeredCount = questions.reduce(
+    (count, question) => count + (state.sessionResults.has(question.id) ? 1 : 0),
+    0
+  );
   const correct = questions.reduce(
     (count, question) => count + (state.sessionResults.get(question.id) === true ? 1 : 0),
     0
   );
+  const incorrectQuestions = questions.filter((question) => state.sessionResults.get(question.id) === false);
   const total = questions.length;
   const rate = total ? Math.round((correct / total) * 100) : 0;
   const comment = rate === 100
@@ -1249,22 +2221,32 @@ function showResults() {
         ? "あと一歩です。解説を確認してもう一周すると効果的です。"
         : "伸びしろがあります。数字と例外要件を一つずつ整理しましょう。";
 
-  const topicText = state.selectedTopic && state.selectedTopic !== "すべて" ? ` / ${state.selectedTopic}` : "";
+  const typeText = state.selectedTypes.length ? ` / ${formatTypesLabel()}` : "";
+  const unitText = state.selectedUnit ? ` / ${state.selectedUnit}` : "";
+  const learningText = state.selectedLearning ? `${state.selectedLearning} / ` : "";
   const rangeScope = state.reviewScope?.type === "range" ? state.reviewScope : null;
   elements.resultCourse.textContent = rangeScope
-    ? `${rangeScope.startDate.replaceAll("-", "/")}〜${rangeScope.endDate.replaceAll("-", "/")} / ${rangeScope.course === "すべて" ? "全科目" : rangeScope.course}`
+    ? `${rangeScope.startDate.replaceAll("-", "/")}〜${rangeScope.endDate.replaceAll("-", "/")} / ${rangeScope.learning === "すべて" || !rangeScope.learning ? "全学習" : rangeScope.learning} / ${rangeScope.course === "すべて" ? "全科目" : rangeScope.course}`
     : !state.rememberAnswers
-      ? state.selectedCourse === "前回の誤答" ? "前回の誤答" : `${state.selectedCourse}${topicText}（復習）`
+      ? state.selectedCourse === "前回の誤答" ? `${learningText}前回の誤答` : `${learningText}${state.selectedCourse}${unitText}${typeText}（復習）`
     : state.selectedCourse === "シャッフル演習"
       ? "全科目シャッフル"
-      : `${state.selectedCourse}${topicText}${state.sessionShuffle ? "（シャッフル）" : ""}`;
+      : `${learningText}${state.selectedCourse}${unitText}${typeText}${state.sessionShuffle ? "（シャッフル）" : ""}`;
   elements.resultScore.textContent = `${rate}%`;
   elements.resultCount.textContent = `${correct} / ${total} 問正解`;
+  elements.resultElapsedTime.textContent = formatDuration(elapsedMs);
+  elements.resultAverageTime.textContent = answeredCount
+    ? formatAverageDuration(elapsedMs / answeredCount)
+    : "--";
   elements.resultRateBar.style.width = `${rate}%`;
   elements.resultComment.textContent = comment;
+  elements.resultMistakesButton.hidden = incorrectQuestions.length === 0;
+  elements.resultMistakesButton.textContent = `今回の誤答 ${incorrectQuestions.length}問を解き直す`;
   clearActiveSession();
   elements.practiceScreen.hidden = true;
   elements.homeScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.topicScreen.hidden = true;
   elements.resultScreen.hidden = false;
   elements.homeButton.hidden = false;
@@ -1289,8 +2271,9 @@ function renderHistory() {
     const status = document.createElement("strong");
     status.textContent = record.isCorrect ? "正解" : "不正解";
     const meta = document.createElement("span");
-    const topic = record.topic ? ` / ${record.topic}` : "";
-    meta.textContent = `${record.course}${topic} ・ ${new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(record.timestamp))}`;
+    const type = record.theme || record.type || record.topic;
+    const classification = [record.learning, record.course, record.unit, type].filter(Boolean).join(" / ");
+    meta.textContent = `${classification} ・ ${new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(record.timestamp))}`;
     header.append(status, meta);
     const question = document.createElement("p");
     question.textContent = record.question;
@@ -1306,6 +2289,8 @@ function showHistory() {
   elements.homeScreen.hidden = true;
   elements.practiceScreen.hidden = true;
   elements.resultScreen.hidden = true;
+  elements.subjectScreen.hidden = true;
+  elements.unitScreen.hidden = true;
   elements.topicScreen.hidden = true;
   elements.historyScreen.hidden = false;
   elements.homeButton.hidden = false;
@@ -1315,12 +2300,31 @@ function showHistory() {
 
 function retryCurrentSession() {
   if (state.selectedCourse === "シャッフル演習") startShuffle();
-  else if (state.reviewScope?.type === "range") {
-    startDateRangeReview(state.reviewScope.startDate, state.reviewScope.endDate, state.reviewScope.course);
-  } else if (!state.rememberAnswers) {
-    startMistakesMode(state.reviewScope?.courseId || null, state.reviewScope?.topic || "すべて");
+  else if (state.reviewScope?.type === "session-mistakes") {
+    const questionsById = new Map(state.questions.map((question) => [String(question.id), question]));
+    const questions = state.reviewScope.questionIds
+      .map((id) => questionsById.get(String(id)))
+      .filter(Boolean);
+    startSessionMistakesReview(questions, state.reviewScope.learning);
   }
-  else startCourse(state.selectedCourse, state.selectedTopic || "すべて", state.sessionShuffle);
+  else if (state.reviewScope?.type === "range") {
+    startDateRangeReview(
+      state.reviewScope.startDate,
+      state.reviewScope.endDate,
+      state.reviewScope.learning || "すべて",
+      state.reviewScope.course
+    );
+  } else if (!state.rememberAnswers) {
+    const reviewTypes = state.reviewScope?.types
+      || (state.reviewScope?.topic && state.reviewScope.topic !== "すべて" ? [state.reviewScope.topic] : []);
+    startMistakesMode(
+      state.reviewScope?.learningId || null,
+      state.reviewScope?.courseId || null,
+      state.reviewScope?.unitId || null,
+      reviewTypes
+    );
+  }
+  else startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes, state.sessionShuffle);
 }
 
 function handleNextQuestion() {
@@ -1346,15 +2350,39 @@ function buildQuestionsUrl({ mode = "full", force = false } = {}) {
   return `/api/questions${query ? `?${query}` : ""}`;
 }
 
+function upgradeQuestionClassification(question) {
+  const course = normalizeCourse(question.course);
+  const learning = normalizeLearning(question.learning) || inferLegacyLearning(course);
+  const unit = normalizeUnit(question.unit);
+  const type = normalizeType(question.theme ?? question.type ?? question.topic ?? question.category);
+  return {
+    ...question,
+    learning,
+    course,
+    unit,
+    theme: type,
+    type,
+    topic: type,
+    category: type,
+    context: `${learning} / ${course} / ${unit} / ${type}`
+  };
+}
+
 function applyQuestionData(nextQuestions, { version = null, fetchedAt = null, fromCache = false } = {}) {
   const previousId = state.currentId;
-  state.questions = nextQuestions;
+  state.questions = nextQuestions.map(upgradeQuestionClassification);
   state.questionVersion = version;
   state.questionFetchedAt = fetchedAt;
   if (!state.questions.some((item) => item.category === state.selectedCategory)) state.selectedCategory = "すべて";
   state.currentId = state.questions.some((item) => item.id === previousId) ? previousId : filteredQuestions()[0]?.id;
   renderHome();
-  if (!elements.topicScreen.hidden && state.selectedCourse) renderTopicScreen(state.selectedCourse);
+  if (!elements.subjectScreen.hidden && state.selectedLearning) renderSubjectScreen(state.selectedLearning);
+  if (!elements.unitScreen.hidden && state.selectedLearning && state.selectedCourse) {
+    renderUnitScreen(state.selectedLearning, state.selectedCourse);
+  }
+  if (!elements.topicScreen.hidden && state.selectedLearning && state.selectedCourse && state.selectedUnit) {
+    renderTopicScreen(state.selectedLearning, state.selectedCourse, state.selectedUnit);
+  }
   if (!elements.practiceScreen.hidden && state.selectedCourse) renderAll();
 
   const label = nextQuestions.length
@@ -1499,25 +2527,70 @@ elements.resetButton.addEventListener("click", () => {
   renderHome();
   showToast("進捗をリセットしました");
 });
+elements.sessionTimerToggle.addEventListener("click", () => {
+  if (state.timerRunning) pauseSessionTimer({ manual: true });
+  else resumeSessionTimer({ manual: true });
+  persistActiveSession();
+});
+elements.timerPausedOverlay.addEventListener("click", () => {
+  resumeSessionTimer({ manual: true });
+  persistActiveSession();
+});
+elements.timerAwayExcludeButton.addEventListener("click", () => resolveTimerAwayPeriod(false));
+elements.timerAwayIncludeButton.addEventListener("click", () => resolveTimerAwayPeriod(true));
 elements.homeButton.addEventListener("click", showHome);
 elements.resumeSessionButton.addEventListener("click", resumeActiveSession);
-elements.topicBackButton.addEventListener("click", showHome);
+elements.subjectBackButton.addEventListener("click", showHome);
+elements.unitBackButton.addEventListener("click", showHome);
+elements.topicBackButton.addEventListener("click", () => showUnits(state.selectedLearning, state.selectedCourse));
+elements.selectAllTypes.addEventListener("change", () => {
+  const typeNames = [...new Set(state.questions
+    .filter((item) => item.learning === state.selectedLearning
+      && item.course === state.selectedCourse
+      && item.unit === state.selectedUnit)
+    .map((item) => item.type))];
+  state.selectedTypes = elements.selectAllTypes.checked ? typeNames : [];
+  elements.topicGrid.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.checked = elements.selectAllTypes.checked;
+  });
+  updateTypeSelectionSummary();
+});
+elements.selectedTypesStartButton.addEventListener("click", () => {
+  startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes, false);
+});
+elements.selectedTypesShuffleButton.addEventListener("click", () => {
+  startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes, true);
+});
+elements.selectedTypesReviewButton.addEventListener("click", () => {
+  startMistakesMode(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes);
+});
+elements.resultMistakesButton.addEventListener("click", retryCurrentSessionMistakes);
 elements.retryButton.addEventListener("click", retryCurrentSession);
 elements.resultHomeButton.addEventListener("click", showHome);
 elements.shuffleButton.addEventListener("click", startShuffle);
-elements.mistakesModeButton.addEventListener("click", startMistakesMode);
-elements.rangeReviewButton.addEventListener("click", openRangeReviewDialog);
-elements.reviewStartDate.addEventListener("input", updateRangeReviewCount);
-elements.reviewEndDate.addEventListener("input", updateRangeReviewCount);
-elements.reviewCourseSelect.addEventListener("change", updateRangeReviewCount);
+elements.mistakesModeButton.addEventListener("click", () => openReviewDialog("latest"));
+elements.rangeReviewButton.addEventListener("click", () => openReviewDialog("range"));
+elements.reviewStartDate.addEventListener("input", updateReviewDialogCount);
+elements.reviewEndDate.addEventListener("input", updateReviewDialogCount);
+elements.reviewLearningSelect.addEventListener("change", () => {
+  renderReviewCourseOptions();
+  updateReviewDialogCount();
+});
+elements.reviewCourseSelect.addEventListener("change", updateReviewDialogCount);
 elements.rangeReviewForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!updateRangeReviewCount().length) return;
+  if (!updateReviewDialogCount().length) return;
   const startDate = elements.reviewStartDate.value;
   const endDate = elements.reviewEndDate.value;
+  const learning = elements.reviewLearningSelect.value;
   const course = elements.reviewCourseSelect.value;
+  const mode = state.reviewDialogMode;
   elements.rangeReviewDialog.close();
-  startDateRangeReview(startDate, endDate, course);
+  if (mode === "latest") {
+    startMistakesMode(learning === "すべて" ? null : learning, course === "すべて" ? null : course);
+  } else {
+    startDateRangeReview(startDate, endDate, learning, course);
+  }
 });
 elements.rangeReviewCloseButton.addEventListener("click", () => elements.rangeReviewDialog.close());
 elements.rangeReviewCancelButton.addEventListener("click", () => elements.rangeReviewDialog.close());
@@ -1545,14 +2618,35 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowLeft") moveQuestion(-1);
   if (event.key === "ArrowRight" && state.graded) handleNextQuestion();
 });
+document.addEventListener("visibilitychange", () => {
+  if (elements.practiceScreen.hidden || !state.sessionQuestions.length) return;
+  if (document.hidden) {
+    beginTimerAwayPeriod();
+  } else if (state.timerAwayDecisionPending) {
+    finishTimerAwayPeriod();
+    persistActiveSession();
+  } else if (state.timerRunning) {
+    renderSessionTimer();
+    startSessionTimerTicker();
+  }
+});
 window.addEventListener("pagehide", () => {
-  if (!elements.practiceScreen.hidden) persistActiveSession();
+  if (!elements.practiceScreen.hidden) beginTimerAwayPeriod();
+});
+window.addEventListener("pageshow", () => {
+  if (!elements.practiceScreen.hidden && state.timerAwayDecisionPending) {
+    finishTimerAwayPeriod();
+    persistActiveSession();
+  } else if (!elements.practiceScreen.hidden && state.timerRunning) {
+    renderSessionTimer();
+    startSessionTimerTicker();
+  }
 });
 
 localStorage.removeItem("loopnote-interval");
 async function initializeQuestions() {
   const restored = await restoreQuestionsFromCache();
-  await syncQuestions({ quiet: true, checkVersion: restored });
+  if (!restored) await syncQuestions({ quiet: true });
 }
 
 initializeQuestions();

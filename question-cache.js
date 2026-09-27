@@ -1,5 +1,6 @@
 const DATABASE_NAME = "loopnote-question-cache";
 const DATABASE_VERSION = 1;
+const CACHE_FORMAT_VERSION = 2;
 const MANIFEST_STORE = "manifests";
 const COURSE_STORE = "courseQuestions";
 const DEMO_SOURCE_KEY = "__demo__";
@@ -55,7 +56,7 @@ export async function loadQuestionCache(source) {
     const setsRequest = transaction.objectStore(COURSE_STORE).index("sourceKey").getAll(key);
     const [manifest, sets] = await Promise.all([requestResult(manifestRequest), requestResult(setsRequest)]);
     await transactionComplete(transaction);
-    if (!manifest) return null;
+    if (!manifest || manifest.formatVersion !== CACHE_FORMAT_VERSION) return null;
 
     const setsByCourse = new Map(sets.map((set) => [set.course, set.questions]));
     const questions = manifest.courses.flatMap((course) => setsByCourse.get(course) || []);
@@ -95,7 +96,7 @@ export async function saveQuestionCache(source, { version, fetchedAt, questions 
         questions: courseQuestions
       });
     });
-    manifestStore.put({ sourceKey: key, version, fetchedAt, courses, count: questions.length });
+    manifestStore.put({ sourceKey: key, formatVersion: CACHE_FORMAT_VERSION, version, fetchedAt, courses, count: questions.length });
     await transactionComplete(transaction);
   } finally {
     database.close();

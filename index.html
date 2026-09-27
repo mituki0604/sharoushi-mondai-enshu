@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f7f4ed" />
     <title>LoopNote | 社労士 問題演習</title>
-    <link rel="stylesheet" href="styles.css?v=20260622-2" />
+    <link rel="stylesheet" href="styles.css?v=20260927-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -31,7 +31,7 @@
         <section class="home-hero">
           <div class="eyebrow">SHAROSHI STUDY</div>
           <h1>今日、どこを鍛えますか？</h1>
-          <p>目的別の一問一答で、知識を「選べる力」に変えていきます。</p>
+          <p>演習する科目を選び、単元・テーマへ進んでください。</p>
         </section>
         <section class="resume-panel" id="resumePanel" hidden>
           <button class="resume-session-button" id="resumeSessionButton" type="button">
@@ -44,21 +44,21 @@
             <span class="resume-action">続きから</span>
           </button>
         </section>
-        <section class="course-grid" id="courseGrid" aria-label="演習コース"></section>
+        <section class="course-grid" id="courseGrid" aria-label="科目を選ぶ"></section>
         <section class="home-tools">
           <button class="shuffle-button" id="shuffleButton" type="button">
             <span class="tool-icon" aria-hidden="true">↝</span>
-            <span><strong>シャッフル演習</strong><small>4科目の問題をランダムに出題</small></span>
+            <span><strong>シャッフル演習</strong><small>すべての科目からランダムに出題</small></span>
             <span class="tool-count" id="shuffleCount">0問</span>
           </button>
           <button class="mistakes-mode-button" id="mistakesModeButton" type="button">
             <span class="tool-icon" aria-hidden="true">!</span>
-            <span><strong>前回の誤答</strong><small>直近で間違えた問題だけ復習</small></span>
+            <span><strong>前回の誤答</strong><small>学習と科目を選んで復習</small></span>
             <span class="tool-count" id="mistakesCount">0問</span>
           </button>
           <button class="range-review-button" id="rangeReviewButton" type="button">
             <span class="tool-icon" aria-hidden="true">日</span>
-            <span><strong>期間指定復習</strong><small>日付と科目で誤答を絞り込み</small></span>
+            <span><strong>期間指定復習</strong><small>日付・学習・科目で絞り込み</small></span>
             <span class="course-arrow">→</span>
           </button>
           <button class="history-button" id="historyButton" type="button">
@@ -69,7 +69,7 @@
         </section>
         <section class="empty-state" id="emptyState" hidden>
           <strong>スプレッドシートを接続してください</strong>
-          <p>「問題番号・科目・論点・問題文・回答・解説」の6列から問題を読み込みます。</p>
+          <p>「問題番号・科目・単元・テーマ・問題文・回答・解説」の7列から過去問を読み込みます。</p>
           <button class="primary-action" id="emptySettingsButton" type="button">接続設定を開く</button>
         </section>
         <section class="home-summary">
@@ -85,17 +85,63 @@
         </div>
       </main>
 
+      <main class="topic-screen" id="subjectScreen" hidden>
+        <section class="topic-header">
+          <button class="topic-back-button" id="subjectBackButton" type="button">← 学習を選び直す</button>
+          <div class="eyebrow" id="subjectLearningLabel">STUDY</div>
+          <h1 id="subjectTitle">科目を選ぶ</h1>
+          <p>演習する科目を選んでください。</p>
+        </section>
+        <section class="subject-grid" id="subjectGrid" aria-label="科目一覧"></section>
+      </main>
+
+      <main class="topic-screen" id="unitScreen" hidden>
+        <section class="topic-header">
+          <button class="topic-back-button" id="unitBackButton" type="button">← 科目を選び直す</button>
+          <div class="eyebrow" id="unitLearningLabel">STUDY / SUBJECT</div>
+          <h1 id="unitTitle">単元を選ぶ</h1>
+          <p>演習する単元を選んでください。</p>
+        </section>
+        <section class="subject-grid" id="unitGrid" aria-label="単元一覧"></section>
+      </main>
+
       <main class="topic-screen" id="topicScreen" hidden>
         <section class="topic-header">
-          <button class="topic-back-button" id="topicBackButton" type="button">← 科目を選び直す</button>
-          <div class="eyebrow" id="topicCourseLabel">SUBJECT</div>
-          <h1 id="topicTitle">論点を選ぶ</h1>
-          <p>順番に解くか、シャッフルして解くかを選べます。</p>
+          <button class="topic-back-button" id="topicBackButton" type="button">← 単元を選び直す</button>
+          <div class="eyebrow" id="topicCourseLabel">SUBJECT / UNIT</div>
+          <h1 id="topicTitle">テーマを選ぶ</h1>
+          <p id="topicDescription">演習するテーマは複数選択できます。</p>
         </section>
-        <section class="topic-grid" id="topicGrid" aria-label="論点一覧"></section>
+        <div class="type-selection-toolbar" id="typeSelectionToolbar">
+          <label class="type-select-all"><input id="selectAllTypes" type="checkbox" /><span>すべて選択</span></label>
+          <strong id="typeSelectionCount">0テーマ・0問</strong>
+        </div>
+        <section class="topic-grid type-grid" id="topicGrid" aria-label="テーマ一覧"></section>
+        <section class="type-start-actions" aria-label="演習方法">
+          <button class="topic-start-button" id="selectedTypesStartButton" type="button">選択したテーマを順番に解く</button>
+          <button class="topic-shuffle-button" id="selectedTypesShuffleButton" type="button">選択したテーマをシャッフル</button>
+          <button class="topic-review-button" id="selectedTypesReviewButton" type="button">復習 0問</button>
+        </section>
       </main>
 
       <div class="workspace" id="practiceScreen" hidden>
+        <button class="timer-paused-overlay" id="timerPausedOverlay" type="button" aria-label="ストップ中。画面をタップして再開" hidden>
+          <span class="timer-paused-symbol" aria-hidden="true">Ⅱ</span>
+          <strong>ストップ中</strong>
+          <span class="timer-paused-value" id="timerPausedValue">00:00</span>
+          <span class="timer-paused-instruction">画面をタップして再開</span>
+        </button>
+        <section class="timer-away-overlay" id="timerAwayOverlay" role="dialog" aria-modal="true" aria-labelledby="timerAwayTitle" hidden>
+          <span class="timer-away-kicker">BACK TO SESSION</span>
+          <strong id="timerAwayTitle">おかえりなさい</strong>
+          <span class="timer-away-label">離れていた時間</span>
+          <span class="timer-away-value" id="timerAwayValue">00:00</span>
+          <p>この時間を演習時間に加算しますか？</p>
+          <div class="timer-away-actions">
+            <button class="timer-away-exclude" id="timerAwayExcludeButton" type="button">加算しない</button>
+            <button class="timer-away-include" id="timerAwayIncludeButton" type="button">加算する</button>
+          </div>
+        </section>
         <aside class="sidebar">
           <section class="progress-card">
             <div class="eyebrow">TODAY'S SESSION</div>
@@ -107,8 +153,8 @@
             <p>一問ずつ、根拠まで確認。</p>
           </section>
 
-          <nav class="category-nav" aria-label="論点">
-            <div class="nav-label">論点</div>
+          <nav class="category-nav" aria-label="テーマ">
+            <div class="nav-label">テーマ</div>
             <div id="categoryList"></div>
           </nav>
 
@@ -132,9 +178,18 @@
 
           <section class="question-card true-false-card" id="questionCard" aria-live="polite">
             <div class="question-meta">
-              <span class="number-pill" id="questionNumber">QUESTION 01</span>
-              <span class="difficulty-pill" id="difficultyBadge">基本</span>
-              <span class="accuracy-pill" id="sessionAccuracyBadge">正答率 --</span>
+              <div class="question-number-stack">
+                <span class="number-pill" id="questionNumber">QUESTION 01</span>
+                <div class="sheet-question-number" id="sheetQuestionNumber">問題番号 --</div>
+              </div>
+              <div class="question-status-badges">
+                <span class="difficulty-pill" id="difficultyBadge">基本</span>
+                <span class="accuracy-pill" id="sessionAccuracyBadge">正答率 --</span>
+              </div>
+              <div class="session-timer" id="sessionTimer" role="timer" aria-label="演習時間">
+                <span class="session-timer-value" id="sessionTimerValue">00:00</span>
+                <button class="session-timer-toggle" id="sessionTimerToggle" type="button" aria-pressed="false">ストップ</button>
+              </div>
               <div class="question-nav-buttons">
                 <button class="previous-question-button" id="previousButton" type="button">← 前へ</button>
                 <button class="jump-question-button" id="jumpButton" type="button">移動</button>
@@ -148,6 +203,7 @@
               <div class="choice-list" id="choiceList"></div>
               <div class="result-message" id="resultMessage" hidden></div>
               <button class="next-button answer-next-button" id="nextButton" type="button" hidden><span class="next-button-label" id="nextButtonLabel">次の問題</span><span aria-hidden="true">→</span></button>
+              <div class="answer-explanation" id="answerExplanation" hidden></div>
               <button class="mistake-button" id="mistakeButton" type="button" hidden>押し間違い</button>
             </div>
 
@@ -169,9 +225,14 @@
           <p class="result-course" id="resultCourse"></p>
           <div class="result-score" id="resultScore">0%</div>
           <p class="result-count" id="resultCount">0 / 0 問正解</p>
+          <div class="result-time-metrics">
+            <div><span>演習時間</span><strong id="resultElapsedTime">00:00</strong></div>
+            <div><span>1問あたり</span><strong id="resultAverageTime">0.0秒</strong></div>
+          </div>
           <div class="result-rate-track"><span id="resultRateBar"></span></div>
           <p class="result-comment" id="resultComment"></p>
           <div class="result-actions">
+            <button class="result-mistakes-action" id="resultMistakesButton" type="button" hidden>今回の誤答を解き直す</button>
             <button class="secondary-action" id="retryButton" type="button">もう一度</button>
             <button class="primary-action" id="resultHomeButton" type="button">ホームへ戻る</button>
           </div>
@@ -214,9 +275,9 @@
         <input class="field-input" id="sourceInput" type="url" placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=0" />
         <p class="field-help">空欄で保存すると未接続状態になります。変更後は右上の更新ボタンで同期できます。</p>
         <div class="format-note">
-          <strong>左から6列です</strong>
-          <code>問題番号, 科目, 論点, 問題文, 回答, 解説</code>
-          <span>論点が空欄の行は「標準問題」にまとまります。回答が○×以外なら、答えを表示して自分で正解・不正解を判定します。</span>
+          <strong>左から7列です</strong>
+          <code>問題番号, 科目, 単元, テーマ, 問題文, 回答, 解説</code>
+          <span>単元・テーマが空欄の行は「標準単元」「標準テーマ」にまとまります。回答が数字なら数字入力で自動採点、その他の文字なら自己採点になります。回答が空欄の行は正解未登録として表示されます。</span>
         </div>
         <div class="dialog-actions">
           <button class="quiet-button" value="cancel">キャンセル</button>
@@ -248,13 +309,13 @@
       <form id="rangeReviewForm">
         <div class="dialog-header">
           <div>
-            <span class="eyebrow">DATED REVIEW</span>
-            <h2>期間指定復習</h2>
+            <span class="eyebrow" id="reviewDialogEyebrow">DATED REVIEW</span>
+            <h2 id="reviewDialogTitle">期間指定復習</h2>
           </div>
           <button class="dialog-close" type="button" id="rangeReviewCloseButton" aria-label="閉じる">×</button>
         </div>
-        <p class="dialog-copy">指定期間中に間違えた問題だけを、記録せずにやり直します。</p>
-        <div class="date-range-fields">
+        <p class="dialog-copy" id="reviewDialogCopy">指定期間中に間違えた問題だけを、記録せずにやり直します。</p>
+        <div class="date-range-fields" id="reviewDateFields">
           <label class="field-label" for="reviewStartDate">開始日
             <input class="field-input" id="reviewStartDate" type="date" required />
           </label>
@@ -262,14 +323,18 @@
             <input class="field-input" id="reviewEndDate" type="date" required />
           </label>
         </div>
-        <label class="field-label" for="reviewCourseSelect">科目</label>
-        <select class="field-input" id="reviewCourseSelect">
-          <option value="すべて">すべての科目</option>
-          <option value="白書統計">白書統計</option>
-          <option value="数字">数字</option>
-          <option value="横断整理">横断整理</option>
-          <option value="罰則">罰則</option>
-        </select>
+        <div class="date-range-fields review-filter-fields">
+          <label class="field-label" for="reviewLearningSelect">学習
+            <select class="field-input" id="reviewLearningSelect">
+              <option value="すべて">すべての学習</option>
+            </select>
+          </label>
+          <label class="field-label" for="reviewCourseSelect">科目
+            <select class="field-input" id="reviewCourseSelect">
+              <option value="すべて">すべての科目</option>
+            </select>
+          </label>
+        </div>
         <div class="range-review-count" id="rangeReviewCount">対象 0問</div>
         <div class="dialog-actions">
           <button class="quiet-button" type="button" id="rangeReviewCancelButton">キャンセル</button>
@@ -278,6 +343,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="app.js?v=20260622-2"></script>
+    <script type="module" src="app.js?v=20260927-1"></script>
   </body>
 </html>
