@@ -281,6 +281,7 @@ button { color: inherit; }
 .type-start-actions { margin-top: 18px; padding: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; border: 1px solid rgba(31,39,36,.1); border-radius: 16px; background: rgba(247,244,237,.92); box-shadow: 0 12px 34px rgba(34,47,41,.08); position: sticky; bottom: 12px; z-index: 3; backdrop-filter: blur(14px); }
 .type-start-actions button { min-height: 52px; font-size: 12px; }
 .type-start-actions button:disabled { cursor: not-allowed; opacity: .35; }
+.unit-next-actions { grid-template-columns: 1fr; }
 
 .result-screen {
   min-height: calc(100vh - 76px);
@@ -802,6 +803,7 @@ kbd { min-width: 21px; padding: 3px 6px; border: 1px solid #d1d2cc; border-botto
   .subject-card { min-height: 92px; padding: 17px; }
   .type-selection-toolbar { position: sticky; top: 76px; z-index: 3; }
   .type-start-actions { grid-template-columns: 1fr 1fr; bottom: 8px; }
+  .unit-next-actions { grid-template-columns: 1fr; }
   .type-start-actions .topic-review-button { grid-column: 1 / -1; }
   .history-screen { width: 100%; min-height: calc(100dvh - 66px); padding: 14px 12px; }
   .history-panel { padding: 22px 16px; border-radius: 19px; }

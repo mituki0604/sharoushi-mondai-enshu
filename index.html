@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f7f4ed" />
     <title>LoopNote | 社労士 問題演習</title>
-    <link rel="stylesheet" href="styles.css?v=20260927-1" />
+    <link rel="stylesheet" href="styles.css?v=20260927-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -100,9 +100,16 @@
           <button class="topic-back-button" id="unitBackButton" type="button">← 科目を選び直す</button>
           <div class="eyebrow" id="unitLearningLabel">STUDY / SUBJECT</div>
           <h1 id="unitTitle">単元を選ぶ</h1>
-          <p>演習する単元を選んでください。</p>
+          <p>演習する単元は複数選択できます。</p>
         </section>
-        <section class="subject-grid" id="unitGrid" aria-label="単元一覧"></section>
+        <div class="type-selection-toolbar" id="unitSelectionToolbar">
+          <label class="type-select-all"><input id="selectAllUnits" type="checkbox" /><span>すべて選択</span></label>
+          <strong id="unitSelectionCount">0単元・0問</strong>
+        </div>
+        <section class="topic-grid type-grid" id="unitGrid" aria-label="単元一覧"></section>
+        <section class="type-start-actions unit-next-actions" aria-label="単元選択を確定">
+          <button class="topic-start-button" id="selectedUnitsNextButton" type="button">選択した単元のテーマを選ぶ</button>
+        </section>
       </main>
 
       <main class="topic-screen" id="topicScreen" hidden>
@@ -343,6 +350,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="app.js?v=20260927-1"></script>
+    <script type="module" src="app.js?v=20260927-2"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-import { loadQuestionCache, saveQuestionCache } from "./question-cache.js?v=20260927-1";
+import { loadQuestionCache, saveQuestionCache } from "./question-cache.js?v=20260927-2";
 
 const baseAliases = {
   id: ["id", "問題番号", "番号", "no"],
@@ -88,6 +88,7 @@ const state = {
   selectedLearning: null,
   selectedCourse: null,
   selectedUnit: null,
+  selectedUnits: [],
   selectedTopic: null,
   selectedTypes: [],
   sessionShuffle: false,
@@ -146,6 +147,9 @@ const elements = {
   unitTitle: $("#unitTitle"),
   unitGrid: $("#unitGrid"),
   unitBackButton: $("#unitBackButton"),
+  selectAllUnits: $("#selectAllUnits"),
+  unitSelectionCount: $("#unitSelectionCount"),
+  selectedUnitsNextButton: $("#selectedUnitsNextButton"),
   resumePanel: $("#resumePanel"),
   resumeSessionButton: $("#resumeSessionButton"),
   resumeSessionTitle: $("#resumeSessionTitle"),
@@ -825,7 +829,7 @@ function clearActiveSession() {
 function readActiveSession() {
   try {
     const saved = JSON.parse(localStorage.getItem(ACTIVE_SESSION_KEY) || "null");
-    if (!saved || ![1, 2, 3, 4, 5].includes(saved.version) || !Array.isArray(saved.questionIds)) return null;
+    if (!saved || ![1, 2, 3, 4, 5, 6].includes(saved.version) || !Array.isArray(saved.questionIds)) return null;
     if ((saved.source || "") !== state.source) {
       clearActiveSession();
       return null;
@@ -850,11 +854,12 @@ function persistActiveSession() {
     enteredAnswer: saved.enteredAnswer
   }]);
   localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify({
-    version: 5,
+    version: 6,
     source: state.source,
     selectedLearning: state.selectedLearning,
     selectedCourse: state.selectedCourse,
     selectedUnit: state.selectedUnit,
+    selectedUnits: state.selectedUnits,
     selectedTopic: state.selectedTopic,
     selectedTypes: state.selectedTypes,
     sessionShuffle: state.sessionShuffle,
@@ -880,7 +885,8 @@ function formatSavedSessionTitle(saved) {
     ? saved.selectedTypes
     : saved.selectedTopic && saved.selectedTopic !== "すべて" ? [saved.selectedTopic] : [];
   const typeText = savedTypes.length === 1 ? ` / ${savedTypes[0]}` : savedTypes.length > 1 ? ` / ${savedTypes.length}テーマ` : "";
-  const unitText = saved.selectedUnit ? ` / ${saved.selectedUnit}` : "";
+  const savedUnits = normalizeUnitSelection(saved.selectedUnits, saved.selectedUnit);
+  const unitText = savedUnits.length ? ` / ${formatUnitsLabel(savedUnits)}` : "";
   if (saved.selectedCourse === "シャッフル演習") return "全科目シャッフル";
   if (saved.selectedCourse === "前回の誤答") {
     return saved.selectedLearning ? `${saved.selectedLearning} / 前回の誤答` : "前回の誤答";
@@ -929,7 +935,7 @@ function resumeActiveSession() {
 
   state.selectedLearning = saved.selectedLearning || sessionQuestions[0]?.learning || null;
   state.selectedCourse = saved.selectedCourse;
-  state.selectedUnit = saved.selectedUnit || sessionQuestions[0]?.unit || null;
+  setSelectedUnits(normalizeUnitSelection(saved.selectedUnits, saved.selectedUnit || sessionQuestions[0]?.unit));
   state.selectedTypes = Array.isArray(saved.selectedTypes)
     ? saved.selectedTypes
     : saved.selectedTopic && saved.selectedTopic !== "すべて" ? [saved.selectedTopic] : [];
@@ -983,6 +989,24 @@ function formatTypesLabel(types = state.selectedTypes) {
   if (!selected.length) return "すべてのテーマ";
   if (selected.length === 1) return selected[0];
   return `${selected.length}テーマ`;
+}
+
+function normalizeUnitSelection(units = state.selectedUnits, fallback = state.selectedUnit) {
+  const selected = Array.isArray(units) ? units.filter(Boolean) : units ? [units] : [];
+  if (!selected.length && fallback) selected.push(fallback);
+  return [...new Set(selected)];
+}
+
+function setSelectedUnits(units) {
+  state.selectedUnits = normalizeUnitSelection(units, null);
+  state.selectedUnit = state.selectedUnits.length === 1 ? state.selectedUnits[0] : null;
+}
+
+function formatUnitsLabel(units = state.selectedUnits) {
+  const selected = normalizeUnitSelection(units, state.selectedUnit);
+  if (!selected.length) return "";
+  if (selected.length === 1) return selected[0];
+  return `${selected.length}単元`;
 }
 
 function renderCategories() {
@@ -1424,7 +1448,7 @@ function renderAll() {
   elements.categoryEyebrow.textContent = !state.rememberAnswers
     ? `${topicLabel} / REVIEW`
     : state.sessionShuffle ? `${topicLabel} / SHUFFLE` : topicLabel;
-  elements.courseTitle.textContent = [state.selectedCourse, state.selectedUnit].filter(Boolean).join(" / ") || "社労士 問題演習";
+  elements.courseTitle.textContent = [state.selectedCourse, formatUnitsLabel()].filter(Boolean).join(" / ") || "社労士 問題演習";
   renderCategories();
   renderQuestion();
   renderProgress();
@@ -1659,7 +1683,7 @@ function showSubjects(learningId) {
   if (!state.questions.some((item) => item.learning === learningId)) return;
   state.selectedLearning = learningId;
   state.selectedCourse = null;
-  state.selectedUnit = null;
+  setSelectedUnits([]);
   state.selectedTopic = null;
   state.selectedTypes = [];
   state.sessionQuestions = [];
@@ -1678,39 +1702,62 @@ function showSubjects(learningId) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function updateUnitSelectionSummary(learningId = state.selectedLearning, courseId = state.selectedCourse) {
+  const courseQuestions = state.questions.filter((item) => item.learning === learningId && item.course === courseId);
+  const units = [...new Set(courseQuestions.map((item) => item.unit))];
+  const selected = new Set(normalizeUnitSelection(state.selectedUnits, state.selectedUnit));
+  const selectedQuestions = courseQuestions.filter((item) => selected.has(item.unit));
+  elements.unitSelectionCount.textContent = `${selected.size}単元・${selectedQuestions.length}問`;
+  elements.selectedUnitsNextButton.disabled = selectedQuestions.length === 0;
+  elements.selectAllUnits.checked = units.length > 0 && selected.size === units.length;
+  elements.selectAllUnits.indeterminate = selected.size > 0 && selected.size < units.length;
+}
+
 function renderUnitScreen(learningId = state.selectedLearning, courseId = state.selectedCourse) {
   const courseQuestions = state.questions.filter((item) => item.learning === learningId && item.course === courseId);
   const units = [...new Set(courseQuestions.map((item) => item.unit))];
+  const validUnits = new Set(units);
+  setSelectedUnits(normalizeUnitSelection(state.selectedUnits, state.selectedUnit).filter((unit) => validUnits.has(unit)));
   elements.unitLearningLabel.textContent = `${learningId} / ${courseId}`;
   elements.unitTitle.textContent = `${courseId}の単元`;
   elements.unitGrid.replaceChildren(...units.map((unit) => {
     const questions = courseQuestions.filter((item) => item.unit === unit);
     const ids = new Set(questions.map((item) => item.id));
     const done = [...state.answered].filter((id) => ids.has(id)).length;
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "subject-card";
+    const card = document.createElement("label");
+    card.className = "type-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = unit;
+    checkbox.checked = state.selectedUnits.includes(unit);
     const copy = document.createElement("span");
+    copy.className = "type-option-copy";
     const title = document.createElement("strong");
+    title.className = "type-option-title";
     title.textContent = unit;
-    const count = document.createElement("small");
+    const count = document.createElement("span");
+    count.className = "type-option-count";
     count.textContent = `${done} / ${questions.length} 問完了`;
-    const arrow = document.createElement("span");
-    arrow.className = "course-arrow";
-    arrow.textContent = "→";
     copy.append(title, count);
-    card.append(copy, arrow);
-    card.addEventListener("click", () => showThemes(learningId, courseId, unit));
+    card.append(checkbox, copy);
+    checkbox.addEventListener("change", () => {
+      const selected = new Set(state.selectedUnits);
+      if (checkbox.checked) selected.add(unit);
+      else selected.delete(unit);
+      setSelectedUnits(units.filter((name) => selected.has(name)));
+      updateUnitSelectionSummary(learningId, courseId);
+    });
     return card;
   }));
+  updateUnitSelectionSummary(learningId, courseId);
 }
 
-function showUnits(learningId, courseId) {
+function showUnits(learningId, courseId, { preserveSelection = false } = {}) {
   const courseQuestions = state.questions.filter((item) => item.learning === learningId && item.course === courseId);
   if (!courseQuestions.length) return;
   state.selectedLearning = learningId;
   state.selectedCourse = courseId;
-  state.selectedUnit = null;
+  if (!preserveSelection) setSelectedUnits([]);
   state.selectedTopic = null;
   state.selectedTypes = [];
   state.sessionQuestions = [];
@@ -1731,19 +1778,21 @@ function showUnits(learningId, courseId) {
 
 function selectedTypeQuestions() {
   const selected = new Set(state.selectedTypes);
+  const selectedUnits = new Set(normalizeUnitSelection(state.selectedUnits, state.selectedUnit));
   return state.questions.filter((item) => (
     item.learning === state.selectedLearning
     && item.course === state.selectedCourse
-    && item.unit === state.selectedUnit
+    && selectedUnits.has(item.unit)
     && selected.has(item.type)
   ));
 }
 
 function updateTypeSelectionSummary() {
+  const selectedUnits = new Set(normalizeUnitSelection(state.selectedUnits, state.selectedUnit));
   const courseQuestions = state.questions.filter((item) => (
     item.learning === state.selectedLearning
     && item.course === state.selectedCourse
-    && item.unit === state.selectedUnit
+    && selectedUnits.has(item.unit)
   ));
   const typeNames = [...new Set(courseQuestions.map((item) => item.type))];
   const selected = new Set(state.selectedTypes);
@@ -1758,14 +1807,18 @@ function updateTypeSelectionSummary() {
   elements.selectAllTypes.indeterminate = state.selectedTypes.length > 0 && state.selectedTypes.length < typeNames.length;
 }
 
-function renderTopicScreen(learningId = state.selectedLearning, courseId = state.selectedCourse, unitId = state.selectedUnit) {
+function renderTopicScreen(learningId = state.selectedLearning, courseId = state.selectedCourse, unitIds = state.selectedUnits) {
+  const selectedUnits = normalizeUnitSelection(unitIds, state.selectedUnit);
+  const selectedUnitSet = new Set(selectedUnits);
   const courseQuestions = state.questions.filter(
-    (item) => item.learning === learningId && item.course === courseId && item.unit === unitId
+    (item) => item.learning === learningId && item.course === courseId && selectedUnitSet.has(item.unit)
   );
   const typeNames = [...new Set(courseQuestions.map((item) => item.type))];
   state.selectedTypes = typeNames.filter((type) => state.selectedTypes.includes(type));
-  elements.topicCourseLabel.textContent = `${learningId} / ${courseId} / ${unitId}`;
-  elements.topicTitle.textContent = `${unitId}のテーマ`;
+  elements.topicCourseLabel.textContent = `${learningId} / ${courseId} / ${formatUnitsLabel(selectedUnits)}`;
+  elements.topicTitle.textContent = selectedUnits.length === 1
+    ? `${selectedUnits[0]}のテーマ`
+    : `選択した${selectedUnits.length}単元のテーマ`;
   elements.topicDescription.textContent = "演習するテーマは複数選択できます。";
   elements.typeSelectionToolbar.hidden = false;
   elements.topicGrid.hidden = false;
@@ -1803,14 +1856,16 @@ function renderTopicScreen(learningId = state.selectedLearning, courseId = state
   updateTypeSelectionSummary();
 }
 
-function showThemes(learningId, courseId, unitId) {
+function showThemes(learningId, courseId, unitIds) {
+  const selectedUnits = normalizeUnitSelection(unitIds, null);
+  const selectedUnitSet = new Set(selectedUnits);
   const courseQuestions = state.questions.filter(
-    (item) => item.learning === learningId && item.course === courseId && item.unit === unitId
+    (item) => item.learning === learningId && item.course === courseId && selectedUnitSet.has(item.unit)
   );
   if (!courseQuestions.length) return;
   state.selectedLearning = learningId;
   state.selectedCourse = courseId;
-  state.selectedUnit = unitId;
+  setSelectedUnits(selectedUnits);
   state.selectedTypes = [...new Set(courseQuestions.map((item) => item.type))];
   state.selectedTopic = "すべて";
   state.sessionQuestions = [];
@@ -1825,7 +1880,7 @@ function showThemes(learningId, courseId, unitId) {
   elements.historyScreen.hidden = true;
   elements.topicScreen.hidden = false;
   elements.homeButton.hidden = false;
-  renderTopicScreen(learningId, courseId, unitId);
+  renderTopicScreen(learningId, courseId, selectedUnits);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -1836,7 +1891,7 @@ function showHome() {
   }
   state.selectedLearning = null;
   state.selectedCourse = null;
-  state.selectedUnit = null;
+  setSelectedUnits([]);
   state.selectedTopic = null;
   state.selectedTypes = [];
   state.sessionQuestions = [];
@@ -1859,9 +1914,11 @@ function showHome() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function startCourse(learningId, courseId, unitId, types = [], shuffled = false) {
+function startCourse(learningId, courseId, unitIds, types = [], shuffled = false) {
+  const selectedUnits = normalizeUnitSelection(unitIds, null);
+  const selectedUnitSet = new Set(selectedUnits);
   const availableTypes = [...new Set(state.questions
-    .filter((item) => item.learning === learningId && item.course === courseId && item.unit === unitId)
+    .filter((item) => item.learning === learningId && item.course === courseId && selectedUnitSet.has(item.unit))
     .map((item) => item.type))];
   const requestedTypes = Array.isArray(types) ? types : types === "すべて" ? availableTypes : [types];
   const selectedTypes = availableTypes.filter((type) => requestedTypes.includes(type));
@@ -1869,14 +1926,14 @@ function startCourse(learningId, courseId, unitId, types = [], shuffled = false)
   const courseQuestions = state.questions.filter(
     (item) => item.learning === learningId
       && item.course === courseId
-      && item.unit === unitId
+      && selectedUnitSet.has(item.unit)
       && selected.has(item.type)
   );
   const firstQuestion = courseQuestions[0];
   if (!firstQuestion) return;
   state.selectedLearning = learningId;
   state.selectedCourse = courseId;
-  state.selectedUnit = unitId;
+  setSelectedUnits(selectedUnits);
   state.selectedTypes = selectedTypes;
   state.selectedTopic = selectedTypes.length === 1 ? selectedTypes[0] : "すべて";
   state.sessionShuffle = shuffled;
@@ -1907,7 +1964,7 @@ function startShuffle() {
   const shuffled = shuffleQuestions(state.questions);
   state.selectedLearning = null;
   state.selectedCourse = "シャッフル演習";
-  state.selectedUnit = null;
+  setSelectedUnits([]);
   state.selectedTopic = "すべて";
   state.selectedTypes = [];
   state.sessionShuffle = true;
@@ -1933,11 +1990,11 @@ function startShuffle() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function startReviewSession(questions, { title, learning = null, unit = null, types = [], scope }) {
+function startReviewSession(questions, { title, learning = null, unit = null, units = [], types = [], scope }) {
   if (!questions.length) return;
   state.selectedLearning = learning;
   state.selectedCourse = title;
-  state.selectedUnit = unit;
+  setSelectedUnits(normalizeUnitSelection(units, unit));
   state.selectedTypes = Array.isArray(types) ? types : [];
   state.selectedTopic = state.selectedTypes.length === 1 ? state.selectedTypes[0] : "すべて";
   state.sessionShuffle = false;
@@ -1984,21 +2041,23 @@ function retryCurrentSessionMistakes() {
   startSessionMistakesReview(questions, sourceLearning);
 }
 
-function startMistakesMode(learningId = null, courseId = null, unitId = null, types = []) {
+function startMistakesMode(learningId = null, courseId = null, unitIds = [], types = []) {
+  const units = normalizeUnitSelection(unitIds, null);
+  const selectedUnits = new Set(units);
   const selected = new Set(Array.isArray(types) ? types : []);
   const scopeQuestions = state.questions.filter(
     (item) => (!learningId || item.learning === learningId)
       && (!courseId || item.course === courseId)
-      && (!unitId || item.unit === unitId)
+      && (!selectedUnits.size || selectedUnits.has(item.unit))
       && (!selected.size || selected.has(item.type))
   );
   const questions = latestIncorrectQuestions(scopeQuestions);
   startReviewSession(questions, {
     title: courseId || "前回の誤答",
     learning: learningId,
-    unit: unitId,
+    units,
     types,
-    scope: { type: "latest", learningId, courseId, unitId, types }
+    scope: { type: "latest", learningId, courseId, unitIds: units, types }
   });
 }
 
@@ -2222,7 +2281,7 @@ function showResults() {
         : "伸びしろがあります。数字と例外要件を一つずつ整理しましょう。";
 
   const typeText = state.selectedTypes.length ? ` / ${formatTypesLabel()}` : "";
-  const unitText = state.selectedUnit ? ` / ${state.selectedUnit}` : "";
+  const unitText = state.selectedUnits.length ? ` / ${formatUnitsLabel()}` : "";
   const learningText = state.selectedLearning ? `${state.selectedLearning} / ` : "";
   const rangeScope = state.reviewScope?.type === "range" ? state.reviewScope : null;
   elements.resultCourse.textContent = rangeScope
@@ -2320,11 +2379,11 @@ function retryCurrentSession() {
     startMistakesMode(
       state.reviewScope?.learningId || null,
       state.reviewScope?.courseId || null,
-      state.reviewScope?.unitId || null,
+      state.reviewScope?.unitIds || state.reviewScope?.unitId || [],
       reviewTypes
     );
   }
-  else startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes, state.sessionShuffle);
+  else startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnits, state.selectedTypes, state.sessionShuffle);
 }
 
 function handleNextQuestion() {
@@ -2380,8 +2439,8 @@ function applyQuestionData(nextQuestions, { version = null, fetchedAt = null, fr
   if (!elements.unitScreen.hidden && state.selectedLearning && state.selectedCourse) {
     renderUnitScreen(state.selectedLearning, state.selectedCourse);
   }
-  if (!elements.topicScreen.hidden && state.selectedLearning && state.selectedCourse && state.selectedUnit) {
-    renderTopicScreen(state.selectedLearning, state.selectedCourse, state.selectedUnit);
+  if (!elements.topicScreen.hidden && state.selectedLearning && state.selectedCourse && state.selectedUnits.length) {
+    renderTopicScreen(state.selectedLearning, state.selectedCourse, state.selectedUnits);
   }
   if (!elements.practiceScreen.hidden && state.selectedCourse) renderAll();
 
@@ -2542,12 +2601,30 @@ elements.homeButton.addEventListener("click", showHome);
 elements.resumeSessionButton.addEventListener("click", resumeActiveSession);
 elements.subjectBackButton.addEventListener("click", showHome);
 elements.unitBackButton.addEventListener("click", showHome);
-elements.topicBackButton.addEventListener("click", () => showUnits(state.selectedLearning, state.selectedCourse));
+elements.topicBackButton.addEventListener("click", () => showUnits(
+  state.selectedLearning,
+  state.selectedCourse,
+  { preserveSelection: true }
+));
+elements.selectAllUnits.addEventListener("change", () => {
+  const units = [...new Set(state.questions
+    .filter((item) => item.learning === state.selectedLearning && item.course === state.selectedCourse)
+    .map((item) => item.unit))];
+  setSelectedUnits(elements.selectAllUnits.checked ? units : []);
+  elements.unitGrid.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.checked = elements.selectAllUnits.checked;
+  });
+  updateUnitSelectionSummary();
+});
+elements.selectedUnitsNextButton.addEventListener("click", () => {
+  showThemes(state.selectedLearning, state.selectedCourse, state.selectedUnits);
+});
 elements.selectAllTypes.addEventListener("change", () => {
+  const selectedUnits = new Set(normalizeUnitSelection(state.selectedUnits, state.selectedUnit));
   const typeNames = [...new Set(state.questions
     .filter((item) => item.learning === state.selectedLearning
       && item.course === state.selectedCourse
-      && item.unit === state.selectedUnit)
+      && selectedUnits.has(item.unit))
     .map((item) => item.type))];
   state.selectedTypes = elements.selectAllTypes.checked ? typeNames : [];
   elements.topicGrid.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
@@ -2556,13 +2633,13 @@ elements.selectAllTypes.addEventListener("change", () => {
   updateTypeSelectionSummary();
 });
 elements.selectedTypesStartButton.addEventListener("click", () => {
-  startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes, false);
+  startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnits, state.selectedTypes, false);
 });
 elements.selectedTypesShuffleButton.addEventListener("click", () => {
-  startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes, true);
+  startCourse(state.selectedLearning, state.selectedCourse, state.selectedUnits, state.selectedTypes, true);
 });
 elements.selectedTypesReviewButton.addEventListener("click", () => {
-  startMistakesMode(state.selectedLearning, state.selectedCourse, state.selectedUnit, state.selectedTypes);
+  startMistakesMode(state.selectedLearning, state.selectedCourse, state.selectedUnits, state.selectedTypes);
 });
 elements.resultMistakesButton.addEventListener("click", retryCurrentSessionMistakes);
 elements.retryButton.addEventListener("click", retryCurrentSession);
