@@ -494,7 +494,7 @@ button { color: inherit; }
 .skip-question-button:hover { background: var(--orange-soft); }
 .previous-question-button:disabled, .jump-question-button:disabled, .skip-question-button:disabled { opacity: .3; }
 .sheet-question-number { width: fit-content; margin: 0; padding: 7px 11px; border: 1px solid rgba(18, 83, 65, .14); border-radius: 999px; color: var(--green-2); background: rgba(241, 249, 244, .92); font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif; font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
-.question-card h2 { max-width: 780px; margin: 18px 0 9px; font-family: "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.62; line-break: strict; text-wrap: pretty; white-space: pre-wrap; }
+.question-card h2 { max-width: 780px; margin: 18px 0 9px; font-family: "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.62; line-break: strict; text-align: justify; text-justify: inter-character; text-wrap: wrap; white-space: pre-wrap; }
 .question-hint { margin: 0; color: var(--muted); font-size: 12px; }
 
 .answer-area { margin-top: 39px; }

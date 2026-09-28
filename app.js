@@ -1,4 +1,4 @@
-import { loadQuestionCache, saveQuestionCache } from "./question-cache.js?v=20260927-2";
+import { loadQuestionCache, saveQuestionCache } from "./question-cache.js?v=20260928-1";
 
 const baseAliases = {
   id: ["id", "問題番号", "番号", "no"],
@@ -619,21 +619,6 @@ function canonicalNumericAnswer(value) {
   return normalizeNumericEntry(value).replace(/^0+(?=\d)/, "");
 }
 
-function formatLongQuestionClause(sentence) {
-  const characters = Array.from(sentence);
-  if (characters.length < 56) return sentence;
-  let lineLength = 0;
-  return characters.map((character, index) => {
-    lineLength += 1;
-    const remaining = characters.length - index - 1;
-    if (["、", "；", "："].includes(character) && lineLength >= 28 && remaining >= 12) {
-      lineLength = 0;
-      return `${character}\n`;
-    }
-    return character;
-  }).join("");
-}
-
 function formatQuestionText(value) {
   const source = normalizeMultilineText(value);
   const characterCount = Array.from(source.replace(/\s/g, "")).length;
@@ -641,10 +626,7 @@ function formatQuestionText(value) {
   const formatted = source.split("\n").map((paragraph) => {
     if (!paragraph.trim()) return "";
     return paragraph.trim()
-      .replace(/([。！？]+[」』）】〕〉》]*)(?:[ \t]+)?(?=\S)/gu, "$1\n")
-      .split("\n")
-      .map(formatLongQuestionClause)
-      .join("\n");
+      .replace(/([。！？]+[」』）】〕〉》]*)(?:[ \t]+)?(?=\S)/gu, "$1\n");
   }).join("\n");
   return preserveVisibleBlankLines(formatted);
 }
