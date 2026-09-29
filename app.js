@@ -1,4 +1,4 @@
-import { loadQuestionCache, saveQuestionCache } from "./question-cache.js?v=20260928-1";
+import { loadQuestionCache, saveQuestionCache } from "./question-cache.js?v=20260929-1";
 
 const baseAliases = {
   id: ["id", "問題番号", "番号", "no"],
@@ -197,6 +197,8 @@ const elements = {
   categoryList: $("#categoryList"),
   categoryEyebrow: $("#categoryEyebrow"),
   questionCard: $("#questionCard"),
+  currentUnitLabel: $("#currentUnitLabel"),
+  currentThemeLabel: $("#currentThemeLabel"),
   questionNumber: $("#questionNumber"),
   sheetQuestionNumber: $("#sheetQuestionNumber"),
   difficultyBadge: $("#difficultyBadge"),
@@ -1353,6 +1355,8 @@ function renderQuestion() {
   elements.choiceList.replaceChildren();
 
   if (!question) {
+    elements.currentUnitLabel.textContent = "--";
+    elements.currentThemeLabel.textContent = "--";
     elements.questionNumber.textContent = "NO QUESTIONS";
     elements.sheetQuestionNumber.textContent = "問題番号 --";
     elements.difficultyBadge.textContent = "—";
@@ -1373,6 +1377,8 @@ function renderQuestion() {
   elements.previousButton.disabled = index <= 0;
   elements.jumpButton.disabled = filtered.length <= 1;
   elements.skipButton.disabled = state.graded || index < 0 || index >= filtered.length - 1;
+  elements.currentUnitLabel.textContent = question.unit || "標準単元";
+  elements.currentThemeLabel.textContent = question.theme || question.type || "標準テーマ";
   elements.questionNumber.textContent = `QUESTION ${String(index + 1).padStart(2, "0")} / ${filtered.length}`;
   elements.sheetQuestionNumber.textContent = `問題番号 ${question.sourceNumber || question.id}`;
   elements.difficultyBadge.textContent = question.difficulty;

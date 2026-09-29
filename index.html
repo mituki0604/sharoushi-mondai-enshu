@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f7f4ed" />
     <title>LoopNote | 社労士 問題演習</title>
-    <link rel="stylesheet" href="styles.css?v=20260928-1" />
+    <link rel="stylesheet" href="styles.css?v=20260929-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -184,6 +184,10 @@
           </div>
 
           <section class="question-card true-false-card" id="questionCard" aria-live="polite">
+            <div class="question-context" aria-label="現在の単元とテーマ">
+              <span class="question-context-item"><b>単元</b><strong id="currentUnitLabel">--</strong></span>
+              <span class="question-context-item"><b>テーマ</b><strong id="currentThemeLabel">--</strong></span>
+            </div>
             <div class="question-meta">
               <div class="question-number-stack">
                 <span class="number-pill" id="questionNumber">QUESTION 01</span>
@@ -350,6 +354,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="app.js?v=20260928-1"></script>
+    <script type="module" src="app.js?v=20260929-1"></script>
   </body>
 </html>

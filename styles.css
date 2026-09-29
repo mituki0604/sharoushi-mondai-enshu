@@ -415,6 +415,10 @@ button { color: inherit; }
 }
 .question-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 4px; background: linear-gradient(90deg, var(--green) 0 63%, var(--orange) 63% 74%, transparent 74%); }
 .question-card.updating { animation: breathe .35s ease; }
+.question-context { margin-bottom: 14px; padding: 9px 11px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; border: 1px solid rgba(18,83,65,.12); border-radius: 10px; color: var(--green); background: #f3f8f5; }
+.question-context-item { min-width: 0; display: inline-flex; align-items: baseline; gap: 6px; line-height: 1.45; }
+.question-context-item b { flex: 0 0 auto; color: var(--green-2); font-size: 8px; font-weight: 800; letter-spacing: .1em; }
+.question-context-item strong { min-width: 0; color: var(--green); font-size: 11px; font-weight: 800; overflow-wrap: anywhere; }
 .question-meta { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 9px; }
 .question-number-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .number-pill, .difficulty-pill { padding: 6px 9px; border-radius: 6px; font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif; font-size: 9px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .12em; }
@@ -870,6 +874,9 @@ kbd { min-width: 21px; padding: 3px 6px; border: 1px solid #d1d2cc; border-botto
     overscroll-behavior: contain;
     scrollbar-width: thin;
   }
+  #practiceScreen .question-context { margin-bottom: 10px; padding: 7px 9px; gap: 4px 12px; }
+  #practiceScreen .question-context-item b { font-size: 7px; }
+  #practiceScreen .question-context-item strong { font-size: 9px; }
   #practiceScreen .question-card h2 {
     margin: 14px 0 6px;
     font-size: 22px;
